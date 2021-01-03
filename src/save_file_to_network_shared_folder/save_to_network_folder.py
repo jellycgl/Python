@@ -1,12 +1,11 @@
 from smb.SMBConnection import SMBConnection
 
 if __name__ == "__main__":
-    # find out the machine name by right-clicking on the "My Computer" and selecting "Properties".
-    server_ip = "192.168.32.95"
+    server_ip = "192.168.32.xx"
     username = "xxxxxx"
     password = "xxxxxxx"
-    my_name = "xxxxxxx"
-    remote_name = "xxxxxxx"
+    my_name = "xxxxxxx"     # find out the machine name by right-clicking on the "My Computer" and selecting "Properties".
+    remote_name = "xxxxxxx" # find out the machine name by right-clicking on the "My Computer" and selecting "Properties".
     local_file_name = "1.txt"
     shared_directory = "Share Folder"
     shared_sub_directory = 'config'
