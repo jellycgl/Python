@@ -1,0 +1,5 @@
+Feature Name,Feature Include,Feature Exclude,Device Type Filter,Device Model Filter,CLI Command,Max Device Count,Max Command Count(Per Device)
+VRRP [Cisco IOS],vrrp,,Cisco Router,,,3,5
+OSPF [Cisco IOS],router ospf $id,aaa,Cisco,N9K-C9332C,show ip ospf $id,5,5
+OSPF [Cisco IOS],ospf;router ospf $id,bbb,Cisco Router;Cisco Switch,N5k;N9K,show ip ospf $id;show ip ospf $id multi-area,10,5
+VLAN [Cisco IOS],"allowed vlan;regex:[$var1:list[,]]switchport trunk allowed vlan ((?:\d+\-\d+|\d+)(?:,(?:\d+\-\d+|\d+))*)",access,Cisco Router;Cisco Switch,N5K;N9K-C9332C,show vlan $var1 detail,15,5

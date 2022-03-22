@@ -1,0 +1,2 @@
+Feature Name,Feature Include,Feature Exclude,Device Type Filter,Device Model Filter,CLI Command,Max Device Count,Max Command Count(Per Device)
+OSPF [Cisco IOS],regex:router ospf (\S+),,Cisco IOS Switch;Cisco Switch,N5K;N9K-C9332C,show ip ospf $id $networID $speed,15,5

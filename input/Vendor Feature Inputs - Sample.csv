@@ -1,0 +1,2 @@
+Feature Name,Feature Include,Feature Exclude,Device Type Filter,Device Model Filter,CLI Command,Max Device Count,Max Command Count(Per Device)
+VLAN [Cisco IOS],allowed vlan,access,Cisco Router;Cisco Switch,N5K;N9K-C9332C,,15,5
