@@ -39,10 +39,10 @@ Featuer_Include = 'Feature Include'
 Featuer_Include_Index = 1
 Featuer_Exclude = 'Feature Exclude'
 Featuer_Exclude_Index = 2
-Device_Filter = 'Device Type Filter'
-Device_Filter_Index = 3
-Device_Filter = 'Device Model Filter'
-Device_Filter_Index = 4
+Device_Type_Filter = 'Device Type Filter'
+Device_Type_Filter_Index = 3
+Device_Model_Filter = 'Device Model Filter'
+Device_Model_Filter_Index = 4
 CLI_Command = 'Cli Command'
 CLI_Command_Index = 5
 Max_Device_Count = 'Max Device Count'
@@ -60,7 +60,8 @@ class FDC_Input:
         self.featureName = ''
         self.featureInclude = ''
         self.featureExclude = ''
-        self.deviceFilter = ''
+        self.deviceTypeFilter = ''
+        self.deviceModelFilter = ''
         self.cliCommand = ''
         self.maxDeviceCount = 3
         self.maxCliCommandCount = 5
@@ -90,7 +91,7 @@ class FDC_Input:
 
     def get_cliCommand(self) -> list:
         commands = set()
-        if not self.cliCommand or not self.var2Values:
+        if not self.cliCommand:
             return commands
         cli_cmds = self.cliCommand.split(Split_Tag)
         for cli_cmd in cli_cmds:
@@ -109,9 +110,12 @@ class FDC_Input:
 
     def get_device_filter(self) -> dict:
         dev_filter = dict()
-        if self.deviceFilter:
-            # Todo
-            pass
+        if not self.deviceTypeFilter and not self.deviceModelFilter:
+            return dev_filter
+        if self.deviceTypeFilter:
+            dev_filter['subTypeName'] = {'$regex': self.deviceTypeFilter, '$options':'i'}
+        if self.deviceModelFilter:
+            dev_filter['model'] = {'$regex': self.deviceModelFilter, '$options':'i'}
         return dev_filter
 
 
@@ -139,6 +143,7 @@ def parse_input(input):
                 continue
             rows.append(row)
     os.remove(output_file_path)
+    shutil.rmtree(root_folder)
     return rows
 
 
@@ -162,7 +167,8 @@ def get_input_items(rows):
         input_item.featureName = row[Feature_Name_Index]
         input_item.featureInclude = row[Featuer_Include_Index]
         input_item.featureExclude = row[Featuer_Exclude_Index]
-        input_item.deviceFilter = row[Device_Filter_Index]
+        input_item.deviceTypeFilter = row[Device_Type_Filter_Index]
+        input_item.deviceModelFilter = row[Device_Model_Filter_Index]
         input_item.cliCommand = row[CLI_Command_Index]
         if row[Max_Device_Count_Index]:
             input_item.maxDeviceCount = row[Max_Device_Count_Index]
@@ -307,7 +313,9 @@ def feature_check(input_items):
         if not input_item:
             continue
         query = input_item.get_device_filter()
+        pluginfw.AddLog(str(query))
         devices = datamodel.QueryDeviceObjects(query)
+        pluginfw.AddLog(str(devices))
         if not devices:
             continue
         for device in devices:
@@ -331,7 +339,7 @@ def feature_check(input_items):
                 feature_info = {
                     'FeatureName': feature_name,
                     'DeviceName': device_name,
-                    'DeviceType': device.get('subType', ''),
+                    'DeviceType': device.get('subTypeName', ''),
                     'DeviceModel': device.get('model', ''),
                     'DeviceDriver': device.get('driverName', ''),
                     'CLICommands': Split_Tag.join(feature_cmds)
@@ -415,7 +423,8 @@ def retrieve_command(device_name, cli_command) -> str:
         content = res.get('error', '')
         if not content:
             content = res.get('livelog', '')
-    content = res.get('content', '')
+    else:
+        content = res.get('content', '')
     return content
 
 
@@ -427,16 +436,21 @@ def upload_result(zip_file_content) -> bool:
 
 
 def save_output(results):
-    stamp = int(time.time())
-    date_time = time.strftime('_%Y%m%d_', time.localtime(stamp))
-    root_folder = NB_Install_Folder + '\\' + FDS_NAME
-    if not os.path.exists(root_folder):
-        os.mkdir(root_folder)
+    if not results:
+        return False
 
     feature_results = results[0]
     device_datas = results[1]
     device_feature_commands = results[2]
     device_config = results[3]
+    if not feature_results and not device_datas and not device_feature_commands and not device_config:
+        return False
+
+    stamp = int(time.time())
+    date_time = time.strftime('_%Y%m%d_', time.localtime(stamp))
+    root_folder = NB_Install_Folder + '\\' + FDS_NAME
+    if not os.path.exists(root_folder):
+        os.mkdir(root_folder)
 
     save_summary_file(root_folder, feature_results)
 
@@ -463,16 +477,19 @@ def save_output(results):
         interfaces_info = infos.get('intfsInfo')
         save_gdr_data(device_folder, date_time, device_name, device_info, interfaces_info)
 
-    zip_file_path = NB_Install_Folder + '\\' + FDS_NAME + ZIP_SUFFIX
+    zip_file_path = root_folder + ZIP_SUFFIX
     with ZipFile(zip_file_path, 'w') as zipObj:
         for folderName, subfolders, filenames in os.walk(root_folder):
             for filename in filenames:
                 filePath = os.path.join(folderName, filename)
-                zipObj.write(filePath)
+                fileInnerPath = filePath[len(root_folder) + 1:]
+                pluginfw.AddLog('fileInnerPath is %s' % str(fileInnerPath))
+                zipObj.write(filePath, fileInnerPath)
     shutil.rmtree(root_folder)
 
     zip_file_content = get_data_from_file(zip_file_path)
     upload_result(zip_file_content)
+    os.remove(zip_file_path)
     return True
 
 
@@ -491,5 +508,4 @@ def run(input):
         pluginfw.AddLog('There is no effective results')
         return False
 
-    save_output(results)
-    return True
+    return save_output(results)
