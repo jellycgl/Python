@@ -4,32 +4,32 @@ import csv
 import json
 import time
 import shutil
+import datetime
 from typing import Tuple
 from zipfile import ZipFile
 
-from netbrain.sysapi import datamodel
 from netbrain.sysapi import pluginfw
+from netbrain.sysapi import datamodel
+from netbrain.sysapi import devicedata
+from netbrain.sysapi import certification
+from netbrain.sysapi.protocol import QueryDataProtocol
 
 
 # Export
-FDS_PATH = 'Feature_Design_Summary'
+FDS_NAME = 'Feature_Design_Summary'
+DATA_FOLDER = 'Data'
 CONF_SUFFIX = '.config'
 JSON_SUFFIX = '.json'
 TEXT_SUFFIX = '.txt'
 ZIP_SUFFIX = '.zip'
 CSV_SUFFIX = '.csv'
-NB_Install_Folder = r'C:\Users\gchen\Desktop\Temp\Feature Summary'
+NB_Install_Folder = r'C:\Program Files\NetBrain\Worker Server\UserData\Temp'
 
 
 # Tags
 Regex_Tag = 'regex:'
 Variable_Tag = '$'
 Split_Tag = ';'
-Regex_Type = {
-    '$vlan': r'((?:\d+\-\d+|\d+)(?:,(?:\d+\-\d+|\d+))*)',
-    '$var1': r'((?:\d+)(?:,\d+)*)',
-    '$ospf': r''
-}
 
 
 # Input
@@ -51,6 +51,10 @@ Max_CLI_Command_Count = 'Max Command Count(Per Device)'
 Max_CLI_Command_Count_Index = 7
 
 
+# NetBrain
+INTF_TYPE = 'intfs'
+
+
 class FDC_Input:
     def __init__(self) -> None:
         self.featureName = ''
@@ -58,8 +62,8 @@ class FDC_Input:
         self.featureExclude = ''
         self.deviceFilter = ''
         self.cliCommand = ''
-        self.maxDeviceCount = -1
-        self.maxCliCommandCount = 10
+        self.maxDeviceCount = 3
+        self.maxCliCommandCount = 5
         self.var2Values = dict()
 
     def get_feature_include(self) -> list:
@@ -111,23 +115,30 @@ class FDC_Input:
         return dev_filter
 
 
+class DateTimeEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, (datetime.date, datetime.datetime)):
+            return obj.isoformat()
+
+
 def parse_input(input):
     rows = []
     if not input:
-        pluginfw.AddLog('Please enter the necessary input information')
+        pluginfw.AddLog('Please enter the feature design definition')
         return rows
-    input_info = json.loads(input)
-    input_file_path = input_info.get('input_file_path', '')
-    if not input_file_path:
-        pluginfw.AddLog('Please put the input file in a specific path')
-        return rows
-    if not os.path.exists(input_file_path):
-        pluginfw.AddLog('The input file could not be found at the specified path')
-        return rows
-    with open(input_file_path, encoding='utf-8', errors='ignore') as csvFile:
+    root_folder = NB_Install_Folder + '\\' + FDS_NAME
+    if not os.path.exists(root_folder):
+        os.mkdir(root_folder)
+    output_file_path = root_folder + '\\input.csv'
+    with open(output_file_path, 'w') as cliFile:
+        cliFile.write(input)
+    with open(output_file_path, encoding='utf-8', errors='ignore') as csvFile:
         reader = csv.reader(csvFile)
         for row in reader:
+            if not row:
+                continue
             rows.append(row)
+    os.remove(output_file_path)
     return rows
 
 
@@ -142,7 +153,7 @@ def check_row_valid(row) -> bool:
     return True
 
 
-def get_input_items(rows) -> list[FDC_Input]:
+def get_input_items(rows):
     input_items = list()
     for row in rows:
         if not check_row_valid(row):
@@ -153,8 +164,10 @@ def get_input_items(rows) -> list[FDC_Input]:
         input_item.featureExclude = row[Featuer_Exclude_Index]
         input_item.deviceFilter = row[Device_Filter_Index]
         input_item.cliCommand = row[CLI_Command_Index]
-        input_item.maxDeviceCount = row[Max_Device_Count_Index]
-        input_item.maxCliCommandCount = row[Max_CLI_Command_Count_Index]
+        if row[Max_Device_Count_Index]:
+            input_item.maxDeviceCount = row[Max_Device_Count_Index]
+        if row[Max_CLI_Command_Count_Index]:
+            input_item.maxCliCommandCount = row[Max_CLI_Command_Count_Index]
         input_items.append(input_item)
     return input_items
 
@@ -268,9 +281,21 @@ def match_config(input_item, config):
 
 def get_data_from_file(file_full_path):
     original_data = ''
-    with open(file_full_path, encoding='utf-8', errors='ignore') as file_data:
+    with open(file_full_path, 'rb') as file_data:
         original_data = file_data.read()
     return original_data
+
+
+def save_data_to_file(file_full_path, data):
+    with open(file_full_path, 'w') as dataFile:
+        dataFile.write(data)
+    return True
+
+
+def translate_from_name(file_name):
+    rstr = r"[\/\\\:\*\?\"\<\>\|]"
+    file_name = re.sub(rstr, "%", file_name)
+    return file_name
 
 
 def feature_check(input_items):
@@ -322,7 +347,7 @@ def feature_check(input_items):
             if device_name in device_datas.keys():
                 continue
             intf_query = {'devId': device_id}
-            interfaces = datamodel.QueryInterfaceObjects(intf_query)
+            interfaces = datamodel.QueryInterfaceObjects(intf_query, INTF_TYPE)
             device_datas[device_name] = {
                 'devInfo': device,
                 'intfsInfo': interfaces
@@ -331,7 +356,7 @@ def feature_check(input_items):
 
 
 def save_summary_file(root_folder, feature_results):
-    output_file_path = root_folder + '\\' + FDS_PATH + CSV_SUFFIX
+    output_file_path = root_folder + '\\' + FDS_NAME + CSV_SUFFIX
     csv_columns = ['Feature Name', 'Dev Name', 'Dev Type', 'Vendor', 'Model', 'Driver', 'CLI Commands']
     with open(output_file_path, 'w', newline='') as csvFile:
         writer = csv.DictWriter(csvFile, fieldnames=csv_columns)
@@ -353,46 +378,58 @@ def save_summary_file(root_folder, feature_results):
 def save_config_file(device_folder, date_time, device_name, config):
     file_name = device_name + '_conf_' + date_time + CONF_SUFFIX
     output_file_path = device_folder + file_name
-    with open(output_file_path, 'w') as configFile:
-        configFile.write(config)
-    configFile.close()
+    save_data_to_file(output_file_path, config)
 
 
 def save_cli_command(device_folder, date_time, device_name, cli_command, original_output):
     file_name = device_name + '_' + cli_command + '_' + date_time + TEXT_SUFFIX
     output_file_path = device_folder + file_name
-    with open(output_file_path, 'w') as cliFile:
-        cliFile.write(original_output)
-    cliFile.close()
+    save_data_to_file(output_file_path, original_output)
 
 
 def save_gdr_data(device_folder, date_time, device_name, device_info, interfaces_info):
     if device_info:
         file_name = device_name + '_dev_' + date_time + JSON_SUFFIX
         output_file_path = device_folder + file_name
-        with open(output_file_path, 'w') as devFile:
-            devFile.write(json.dumps(device_info))
-        devFile.close()
+        save_data_to_file(output_file_path, json.dumps(device_info, indent=4, cls=DateTimeEncoder))
     if interfaces_info:
         file_name = device_name + '_intf_' + date_time + JSON_SUFFIX
         output_file_path = device_folder + file_name
-        with open(output_file_path, 'w') as intfFile:
-            intfFile.write(json.dumps(interfaces_info))
-        intfFile.close()
+        save_data_to_file(output_file_path, json.dumps(interfaces_info, indent=4, cls=DateTimeEncoder))
 
 
 def retrieve_command(device_name, cli_command) -> str:
-    return 'Test Retrieve'
+    if not device_name or not cli_command:
+        return ''
+    rp = QueryDataProtocol()
+    rp.devName = device_name
+    rp.command = cli_command
+    rp.commandType = 9 # cli command
+    rp.datasource.type = 1 # live resource
+    res = devicedata.Query(rp)
+    if not res:
+        return ''
+    content = ''
+    status = res.get('result', 'fail')
+    if status == 'fail':
+        content = res.get('error', '')
+        if not content:
+            content = res.get('livelog', '')
+    content = res.get('content', '')
+    return content
 
 
 def upload_result(zip_file_content) -> bool:
+    report_name = FDS_NAME + ZIP_SUFFIX
+    export_path = FDS_NAME
+    certification.export_certification_report(report_name, zip_file_content, export_path)
     return True
 
 
 def save_output(results):
     stamp = int(time.time())
     date_time = time.strftime('_%Y%m%d_', time.localtime(stamp))
-    root_folder = NB_Install_Folder + '\\' + FDS_PATH
+    root_folder = NB_Install_Folder + '\\' + FDS_NAME
     if not os.path.exists(root_folder):
         os.mkdir(root_folder)
 
@@ -403,41 +440,38 @@ def save_output(results):
 
     save_summary_file(root_folder, feature_results)
 
+    device_folder = root_folder + '\\' + DATA_FOLDER
+    if not os.path.exists(device_folder):
+        os.mkdir(device_folder)
+    device_folder = device_folder + '\\'
+
     for device_name, feature_cmds in device_feature_commands.items():
-        device_folder = root_folder + '\\' + device_name
-        if not os.path.exists(device_folder):
-            os.mkdir(device_folder)
-        device_folder = device_folder + '\\'
         for featureName, cmds in feature_cmds.items():
             for cli_command in cmds:
                 if not cli_command:
                     continue
                 original_output = retrieve_command(device_name, cli_command)
+                device_name = translate_from_name(device_name)
                 save_cli_command(device_folder, date_time, device_name, cli_command, original_output)
 
     for device_name, infos in device_datas.items():
-        device_folder = root_folder + '\\' + device_name
-        if not os.path.exists(device_folder):
-            os.mkdir(device_folder)
-        device_folder = device_folder + '\\'
-
         config_content = device_config.get(device_name)
+        device_name = translate_from_name(device_name)
         save_config_file(device_folder, date_time, device_name, config_content)
 
         device_info = infos.get('devInfo')
         interfaces_info = infos.get('intfsInfo')
         save_gdr_data(device_folder, date_time, device_name, device_info, interfaces_info)
 
-    zip_file_path = NB_Install_Folder + '\\' + FDS_PATH + ZIP_SUFFIX
+    zip_file_path = NB_Install_Folder + '\\' + FDS_NAME + ZIP_SUFFIX
     with ZipFile(zip_file_path, 'w') as zipObj:
         for folderName, subfolders, filenames in os.walk(root_folder):
             for filename in filenames:
                 filePath = os.path.join(folderName, filename)
                 zipObj.write(filePath)
-    zipObj.close()
     shutil.rmtree(root_folder)
 
-    zip_file_content = ''
+    zip_file_content = get_data_from_file(zip_file_path)
     upload_result(zip_file_content)
     return True
 
