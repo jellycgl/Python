@@ -494,8 +494,8 @@ def retrieve_command(device_name, cli_command) -> str:
     return content
 
 
-def upload_result(zip_file_content) -> bool:
-    report_name = FDS_NAME + ZIP_SUFFIX
+def upload_result(zip_file_content, timeStamp) -> bool:
+    report_name = FDS_NAME + timeStamp + ZIP_SUFFIX
     export_path = FDS_NAME
     certification.export_certification_report(report_name, zip_file_content, export_path)
     return True
@@ -554,7 +554,7 @@ def save_output(results):
     shutil.rmtree(root_folder)
 
     zip_file_content = get_data_from_file(zip_file_path)
-    upload_result(zip_file_content)
+    upload_result(zip_file_content, date_time)
     os.remove(zip_file_path)
     return True
 
