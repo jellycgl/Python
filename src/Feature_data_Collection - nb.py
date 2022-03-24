@@ -55,6 +55,72 @@ Max_CLI_Command_Count_Index = 7
 INTF_TYPE = 'intfs'
 
 
+class FileNameTranslate:
+    def __init__(self) -> None:
+        self.invalidChars = dict()
+        self.invalidChars['/']  = 'A'
+        self.invalidChars['\\'] = 'B'
+        self.invalidChars[':']  = 'C'
+        self.invalidChars['*']  = 'D'
+        self.invalidChars['?']  = 'E'
+        self.invalidChars['\"'] = 'F'
+        self.invalidChars['<']  = 'G'
+        self.invalidChars['>']  = 'H'
+        self.invalidChars['|']  = 'I'
+        self.invalidChars['$']  = 'J'
+
+    def translateToName(self, name, prefix='X') -> str:
+        file_name = ''
+        for index in range(len(name)):
+            chVal = name[index]
+            if chVal == prefix:
+                file_name = file_name + prefix
+                file_name = file_name + prefix
+                continue
+            if chVal not in self.invalidChars.keys():
+                file_name = file_name + chVal
+                continue
+            file_name = file_name + prefix
+            charReplace = self.invalidChars[chVal]
+            file_name = file_name + charReplace
+        return file_name
+
+    def get_invalid_char(self, value) -> str:
+        for chVal, chRep in self.invalidChars.items():
+            if chRep == value:
+                return chVal
+        return ''
+
+    def translateFromName(self, orign, prefix='X') -> str:
+        name = ""
+        char_index = -1
+        for index in range(len(orign)):
+            char_index = char_index + 1
+            if char_index == len(orign):
+                return name
+            chVal = orign[char_index]
+            if chVal != prefix and chVal not in self.invalidChars.values():
+                name = name + chVal
+                continue
+            char_index = char_index + 1
+            if char_index >= len(orign):
+                return orign
+            chVal = orign[char_index]
+            if chVal is None:
+                break
+            if chVal == prefix:
+                name = name + prefix
+            elif chVal in self.invalidChars.values():
+                org_char = self.get_invalid_char(chVal)
+                if org_char not in self.invalidChars.keys():
+                    return orign
+                name = name + org_char
+            else:
+                name = name + prefix
+                name = name + chVal
+        return name
+
+
 class FDC_Input:
     def __init__(self) -> None:
         self.featureName = ''
@@ -299,8 +365,8 @@ def save_data_to_file(file_full_path, data):
 
 
 def translate_from_name(file_name):
-    rstr = r"[\/\\\:\*\?\"\<\>\|]"
-    file_name = re.sub(rstr, "%", file_name)
+    translator = FileNameTranslate()
+    file_name = translator.translateToName(file_name)
     return file_name
 
 
