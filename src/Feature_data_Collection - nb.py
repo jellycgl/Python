@@ -494,6 +494,7 @@ def retrieve_command(device_name, cli_command) -> str:
 
 
 def upload_result(zip_file_content, timeStamp) -> bool:
+    timeStamp = '_%s' % timeStamp
     report_name = FDS_NAME + timeStamp + ZIP_SUFFIX
     export_path = FDS_NAME
     certification.export_certification_report(report_name, zip_file_content, export_path)
@@ -512,7 +513,7 @@ def save_output(results):
         return False
 
     stamp = int(time.time())
-    date_time = time.strftime('_%Y%m%d_', time.localtime(stamp))
+    date_time = time.strftime('%Y%m%d', time.localtime(stamp))
     root_folder = NB_Install_Folder + '\\' + FDS_NAME
     if not os.path.exists(root_folder):
         os.mkdir(root_folder)
