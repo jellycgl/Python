@@ -17,7 +17,7 @@ from netbrain.sysapi.protocol import QueryDataProtocol
 
 # Export
 FDS_NAME = 'Feature_Design_Summary'
-DATA_FOLDER = 'Data'
+DATA_FOLDER = 'DeviceData'
 CONF_SUFFIX = '.config'
 JSON_SUFFIX = '.json'
 TEXT_SUFFIX = '.txt'
@@ -379,9 +379,7 @@ def feature_check(input_items):
         if not input_item:
             continue
         query = input_item.get_device_filter()
-        pluginfw.AddLog(str(query))
         devices = datamodel.QueryDeviceObjects(query)
-        pluginfw.AddLog(str(devices))
         if not devices:
             continue
         for device in devices:
@@ -408,6 +406,7 @@ def feature_check(input_items):
                     'DeviceType': device.get('subTypeName', ''),
                     'DeviceModel': device.get('model', ''),
                     'DeviceDriver': device.get('driverName', ''),
+                    'DeviceVendor': device.get('vendor', ''),
                     'CLICommands': Split_Tag.join(feature_cmds)
                 }
                 feature_results.append(feature_info)
@@ -440,10 +439,10 @@ def save_summary_file(root_folder, feature_results):
                 'Feature Name': result.get('FeatureName', ''),
                 'Dev Name': result.get('DeviceName', ''),
                 'Dev Type': result.get('DeviceType', ''),
-                'Vendor': '',
+                'Vendor': result.get('DeviceVendor', ''),
                 'Model': result.get('DeviceModel', ''),
                 'Driver': result.get('DeviceDriver', ''),
-                'CLI Commands': result.get('CliCommands', ''),
+                'CLI Commands': result.get('CLICommands', '')
             }
             writer.writerow(row)
     return True
@@ -549,7 +548,6 @@ def save_output(results):
             for filename in filenames:
                 filePath = os.path.join(folderName, filename)
                 fileInnerPath = filePath[len(root_folder) + 1:]
-                pluginfw.AddLog('fileInnerPath is %s' % str(fileInnerPath))
                 zipObj.write(filePath, fileInnerPath)
     shutil.rmtree(root_folder)
 
