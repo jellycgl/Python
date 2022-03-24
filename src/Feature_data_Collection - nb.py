@@ -99,7 +99,7 @@ class FileNameTranslate:
             if char_index == len(orign):
                 return name
             chVal = orign[char_index]
-            if chVal != prefix and chVal not in self.invalidChars.values():
+            if chVal != prefix:
                 name = name + chVal
                 continue
             char_index = char_index + 1
