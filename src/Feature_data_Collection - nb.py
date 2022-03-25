@@ -463,6 +463,7 @@ def save_config_file(device_folder, date_time, device_name, config):
 
 
 def save_cli_command(device_folder, date_time, device_name, cli_command, original_output):
+    cli_command = translate_from_name(cli_command)
     file_name = device_name + '_' + cli_command + '_' + date_time + TEXT_SUFFIX
     output_file_path = device_folder + file_name
     save_data_to_file(output_file_path, original_output)
