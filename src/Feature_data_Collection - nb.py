@@ -390,6 +390,8 @@ def feature_check(input_items):
         devices = datamodel.QueryDeviceObjects(query)
         if not devices:
             continue
+        if not input_item.maxDeviceCount:
+            devices = devices[0: input_item.maxDeviceCount]
         for device in devices:
             device_id = device.get('_id', '')
             device_name = device.get('name', '')
