@@ -447,8 +447,8 @@ def save_summary_file(root_folder, feature_results):
         for result in feature_results:
             row = {
                 'Feature Name': result.get('FeatureName', ''),
-                'Dev Name': result.get('DeviceName', ''),
-                'Dev Type': result.get('DeviceType', ''),
+                'Device Name': result.get('DeviceName', ''),
+                'Device Type': result.get('DeviceType', ''),
                 'Vendor': result.get('DeviceVendor', ''),
                 'Model': result.get('DeviceModel', ''),
                 'Driver': result.get('DeviceDriver', ''),
