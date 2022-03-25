@@ -167,11 +167,12 @@ class FDC_Input:
                     return commands
             else:
                 result = self.cliCommand
-                for var, value in self.var2Values.items():
-                    result = result.replace(var, value)
-                commands.add(result)
-                if len(commands) == self.maxCliCommandCount:
-                    return commands
+                for var, values in self.var2Values.items():
+                    for value in values:
+                        result = self.cliCommand.replace(var, value)
+                        commands.add(result)
+                        if len(commands) == self.maxCliCommandCount:
+                            return commands
         return commands
 
     def get_device_filter(self) -> dict:
@@ -237,9 +238,9 @@ def get_input_items(rows):
         input_item.deviceModelFilter = row[Device_Model_Filter_Index]
         input_item.cliCommand = row[CLI_Command_Index]
         if row[Max_Device_Count_Index]:
-            input_item.maxDeviceCount = row[Max_Device_Count_Index]
+            input_item.maxDeviceCount = int(row[Max_Device_Count_Index])
         if row[Max_CLI_Command_Count_Index]:
-            input_item.maxCliCommandCount = row[Max_CLI_Command_Count_Index]
+            input_item.maxCliCommandCount = int(row[Max_CLI_Command_Count_Index])
         input_items.append(input_item)
     return input_items
 
@@ -294,10 +295,16 @@ def match_include_condition(input_item, config_line):
             if match_result:
                 match_value = match_result[0]
                 if isinstance(match_value, str) == 1:
-                    input_item.var2Values[vars[0]] = match_value
+                    var_name = vars[0]
+                    if var_name not in input_item.var2Values.keys():
+                        input_item.var2Values[var_name] = set()
+                    input_item.var2Values[var_name].add(match_value)
                 if isinstance(match_value, Tuple):
                     for index in range(len(vars)):
-                        input_item.var2Values[vars[index]] = match_value[index]
+                        var_name = vars[index]
+                        if var_name not in input_item.var2Values.keys():
+                            input_item.var2Values[var_name] = set()
+                        input_item.var2Values[var_name].add(match_value[index])
                 return True
         if Regex_Tag in include_condition:
             regex = include_condition.split(Regex_Tag)[1].strip()
@@ -340,15 +347,16 @@ def match_include_condition(input_item, config_line):
 
 def match_config(input_item, config):
     config_lines = config.split('\n')
+    matched_result = False
     for config_line in config_lines:
         if match_exclude_condition(input_item, config_line):
             pluginfw.AddLog('Matched exclude condition, the config content is "%s"' % config_line)
             return False
         if match_include_condition(input_item, config_line):
             pluginfw.AddLog('Matched include condition, the config content is "%s"' % config_line)
-            return True
+            matched_result = True
     pluginfw.AddLog('Neither inclusion nor exclusion conditions were matched')
-    return False
+    return matched_result
 
 
 def get_data_from_file(file_full_path):
@@ -526,22 +534,21 @@ def save_output(results):
     device_folder = device_folder + '\\'
 
     for device_name, feature_cmds in device_feature_commands.items():
+        device_file_name = translate_from_name(device_name)
         for featureName, cmds in feature_cmds.items():
             for cli_command in cmds:
                 if not cli_command:
                     continue
                 original_output = retrieve_command(device_name, cli_command)
-                device_name = translate_from_name(device_name)
-                save_cli_command(device_folder, date_time, device_name, cli_command, original_output)
+                save_cli_command(device_folder, date_time, device_file_name, cli_command, original_output)
 
-    for device_name, infos in device_datas.items():
         config_content = device_config.get(device_name)
-        device_name = translate_from_name(device_name)
-        save_config_file(device_folder, date_time, device_name, config_content)
+        save_config_file(device_folder, date_time, device_file_name, config_content)
 
+        infos = device_datas[device_name]
         device_info = infos.get('devInfo')
         interfaces_info = infos.get('intfsInfo')
-        save_gdr_data(device_folder, date_time, device_name, device_info, interfaces_info)
+        save_gdr_data(device_folder, date_time, device_file_name, device_info, interfaces_info)
 
     zip_file_path = root_folder + ZIP_SUFFIX
     with ZipFile(zip_file_path, 'w') as zipObj:
