@@ -58,16 +58,16 @@ INTF_TYPE = 'intfs'
 class FileNameTranslate:
     def __init__(self) -> None:
         self.invalidChars = dict()
-        self.invalidChars['/']  = 'A'
+        self.invalidChars['/'] = 'A'
         self.invalidChars['\\'] = 'B'
-        self.invalidChars[':']  = 'C'
-        self.invalidChars['*']  = 'D'
-        self.invalidChars['?']  = 'E'
+        self.invalidChars[':'] = 'C'
+        self.invalidChars['*'] = 'D'
+        self.invalidChars['?'] = 'E'
         self.invalidChars['\"'] = 'F'
-        self.invalidChars['<']  = 'G'
-        self.invalidChars['>']  = 'H'
-        self.invalidChars['|']  = 'I'
-        self.invalidChars['$']  = 'J'
+        self.invalidChars['<'] = 'G'
+        self.invalidChars['>'] = 'H'
+        self.invalidChars['|'] = 'I'
+        self.invalidChars['$'] = 'J'
 
     def translateToName(self, name, prefix='X') -> str:
         file_name = ''
@@ -180,9 +180,11 @@ class FDC_Input:
         if not self.deviceTypeFilter and not self.deviceModelFilter:
             return dev_filter
         if self.deviceTypeFilter:
-            dev_filter['subTypeName'] = {'$regex': self.deviceTypeFilter, '$options':'i'}
+            dev_filter['subTypeName'] = {
+                '$regex': self.deviceTypeFilter, '$options': 'i'}
         if self.deviceModelFilter:
-            dev_filter['model'] = {'$regex': self.deviceModelFilter, '$options':'i'}
+            dev_filter['model'] = {
+                '$regex': self.deviceModelFilter, '$options': 'i'}
         return dev_filter
 
 
@@ -240,7 +242,8 @@ def get_input_items(rows):
         if row[Max_Device_Count_Index]:
             input_item.maxDeviceCount = int(row[Max_Device_Count_Index])
         if row[Max_CLI_Command_Count_Index]:
-            input_item.maxCliCommandCount = int(row[Max_CLI_Command_Count_Index])
+            input_item.maxCliCommandCount = int(
+                row[Max_CLI_Command_Count_Index])
         input_items.append(input_item)
     return input_items
 
@@ -350,10 +353,12 @@ def match_config(input_item, config):
     matched_result = False
     for config_line in config_lines:
         if match_exclude_condition(input_item, config_line):
-            pluginfw.AddLog('Matched exclude condition, the config content is "%s"' % config_line)
+            pluginfw.AddLog(
+                'Matched exclude condition, the config content is "%s"' % config_line)
             return False
         if match_include_condition(input_item, config_line):
-            pluginfw.AddLog('Matched include condition, the config content is "%s"' % config_line)
+            pluginfw.AddLog(
+                'Matched include condition, the config content is "%s"' % config_line)
             matched_result = True
     pluginfw.AddLog('Neither inclusion nor exclusion conditions were matched')
     return matched_result
@@ -424,9 +429,11 @@ def feature_check(input_items):
                     if device_name not in device_feature_commands:
                         device_feature_commands[device_name] = dict()
                     if feature_name not in device_feature_commands[device_name].keys():
-                        device_feature_commands[device_name][feature_name] = set()
+                        device_feature_commands[device_name][feature_name] = set(
+                        )
                     for feature_cmd in feature_cmds:
-                        device_feature_commands[device_name][feature_name].add(feature_cmd)
+                        device_feature_commands[device_name][feature_name].add(
+                            feature_cmd)
             if device_name in device_datas.keys():
                 continue
             intf_query = {'devId': device_id}
@@ -440,7 +447,8 @@ def feature_check(input_items):
 
 def save_summary_file(root_folder, feature_results):
     output_file_path = root_folder + '\\' + FDS_NAME + CSV_SUFFIX
-    csv_columns = ['Feature Name', 'Dev Name', 'Dev Type', 'Vendor', 'Model', 'Driver', 'CLI Commands']
+    csv_columns = ['Feature Name', 'Dev Name', 'Dev Type',
+                   'Vendor', 'Model', 'Driver', 'CLI Commands']
     with open(output_file_path, 'w', newline='') as csvFile:
         writer = csv.DictWriter(csvFile, fieldnames=csv_columns)
         writer.writeheader()
@@ -475,11 +483,13 @@ def save_gdr_data(device_folder, date_time, device_name, device_info, interfaces
     if device_info:
         file_name = device_name + '_dev_' + date_time + JSON_SUFFIX
         output_file_path = device_folder + file_name
-        save_data_to_file(output_file_path, json.dumps(device_info, indent=4, cls=DateTimeEncoder))
+        save_data_to_file(output_file_path, json.dumps(
+            device_info, indent=4, cls=DateTimeEncoder))
     if interfaces_info:
         file_name = device_name + '_intf_' + date_time + JSON_SUFFIX
         output_file_path = device_folder + file_name
-        save_data_to_file(output_file_path, json.dumps(interfaces_info, indent=4, cls=DateTimeEncoder))
+        save_data_to_file(output_file_path, json.dumps(
+            interfaces_info, indent=4, cls=DateTimeEncoder))
 
 
 def retrieve_command(device_name, cli_command) -> str:
@@ -488,8 +498,8 @@ def retrieve_command(device_name, cli_command) -> str:
     rp = QueryDataProtocol()
     rp.devName = device_name
     rp.command = cli_command
-    rp.commandType = 9 # cli command
-    rp.datasource.type = 1 # live resource
+    rp.commandType = 9  # cli command
+    rp.datasource.type = 1  # live resource
     res = devicedata.Query(rp)
     if not res:
         return ''
@@ -508,7 +518,8 @@ def upload_result(zip_file_content, timeStamp) -> bool:
     timeStamp = '_%s' % timeStamp
     report_name = FDS_NAME + timeStamp + ZIP_SUFFIX
     export_path = FDS_NAME
-    certification.export_certification_report(report_name, zip_file_content, export_path)
+    certification.export_certification_report(
+        report_name, zip_file_content, export_path)
     return True
 
 
@@ -543,15 +554,18 @@ def save_output(results):
                 if not cli_command:
                     continue
                 original_output = retrieve_command(device_name, cli_command)
-                save_cli_command(device_folder, date_time, device_file_name, cli_command, original_output)
+                save_cli_command(device_folder, date_time,
+                                 device_file_name, cli_command, original_output)
 
         config_content = device_config.get(device_name)
-        save_config_file(device_folder, date_time, device_file_name, config_content)
+        save_config_file(device_folder, date_time,
+                         device_file_name, config_content)
 
         infos = device_datas[device_name]
         device_info = infos.get('devInfo')
         interfaces_info = infos.get('intfsInfo')
-        save_gdr_data(device_folder, date_time, device_file_name, device_info, interfaces_info)
+        save_gdr_data(device_folder, date_time, device_file_name,
+                      device_info, interfaces_info)
 
     zip_file_path = root_folder + ZIP_SUFFIX
     with ZipFile(zip_file_path, 'w') as zipObj:
