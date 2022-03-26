@@ -5,7 +5,6 @@ import json
 import time
 import shutil
 import datetime
-from typing import Tuple
 from zipfile import ZipFile
 
 from netbrain.sysapi import pluginfw
@@ -17,6 +16,7 @@ from netbrain.sysapi.protocol import QueryDataProtocol
 
 # Export
 FDS_NAME = 'Feature_Design_Summary'
+INPUT_NAME = 'input_file'
 DATA_FOLDER = 'DeviceData'
 CONF_SUFFIX = '.config'
 JSON_SUFFIX = '.json'
@@ -302,7 +302,7 @@ def match_include_condition(input_item, config_line):
                     if var_name not in input_item.var2Values.keys():
                         input_item.var2Values[var_name] = set()
                     input_item.var2Values[var_name].add(match_value)
-                if isinstance(match_value, Tuple):
+                if isinstance(match_value, tuple):
                     for index in range(len(vars)):
                         var_name = vars[index]
                         if var_name not in input_item.var2Values.keys():
@@ -447,7 +447,7 @@ def feature_check(input_items):
 
 def save_summary_file(root_folder, feature_results):
     output_file_path = root_folder + '\\' + FDS_NAME + CSV_SUFFIX
-    csv_columns = ['Feature Name', 'Dev Name', 'Dev Type',
+    csv_columns = ['Feature Name', 'Device Name', 'Device Type',
                    'Vendor', 'Model', 'Driver', 'CLI Commands']
     with open(output_file_path, 'w', newline='') as csvFile:
         writer = csv.DictWriter(csvFile, fieldnames=csv_columns)
@@ -462,6 +462,39 @@ def save_summary_file(root_folder, feature_results):
                 'Driver': result.get('DeviceDriver', ''),
                 'CLI Commands': result.get('CLICommands', '')
             }
+            writer.writerow(row)
+    return True
+
+
+def save_input_file(root_folder, device_feature_commands, device_datas):
+    rows = []
+    dev_schemas = set()
+    for dev_name in device_feature_commands.keys():
+        if not dev_name:
+            continue
+        infos = device_datas.get(dev_name)
+        if not infos:
+            continue
+        device_info = infos.get('devInfo')
+        pluginfw.AddLog('device_info type is %s' % str(type(device_info)))
+        pluginfw.AddLog('device_info is %s' % str(device_info))
+        if not device_info or not isinstance(device_info, dict):
+            continue
+        row = {}
+        for schema in device_info.keys():
+            dev_schemas.add(schema)
+            row[schema] = device_info[schema]
+        rows.append(row)
+
+    if not rows:
+        return False
+
+    output_file_path = root_folder + '\\' + INPUT_NAME + CSV_SUFFIX
+    csv_columns = list(dev_schemas)
+    with open(output_file_path, 'w', newline='') as csvFile:
+        writer = csv.DictWriter(csvFile, fieldnames=csv_columns)
+        writer.writeheader()
+        for row in rows:
             writer.writerow(row)
     return True
 
@@ -541,6 +574,8 @@ def save_output(results):
         os.mkdir(root_folder)
 
     save_summary_file(root_folder, feature_results)
+
+    save_input_file(root_folder, device_feature_commands, device_datas)
 
     device_folder = root_folder + '\\' + DATA_FOLDER
     if not os.path.exists(device_folder):
