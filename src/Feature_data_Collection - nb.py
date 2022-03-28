@@ -175,16 +175,27 @@ class FDC_Input:
                             return commands
         return commands
 
+    def clear_cache_value(self):
+        self.var2Values = dict()
+
+
+    def get_final_filter(self, filter_item):
+        filters = filter_item.split(Split_Tag)
+        if len(filters) <= 1:
+            return filter_item
+        final_filter = '|'.join(filters)
+        return final_filter
+
     def get_device_filter(self) -> dict:
         dev_filter = dict()
         if not self.deviceTypeFilter and not self.deviceModelFilter:
             return dev_filter
         if self.deviceTypeFilter:
             dev_filter['subTypeName'] = {
-                '$regex': self.deviceTypeFilter, '$options': 'i'}
+                '$regex': self.get_final_filter(self.deviceTypeFilter), '$options': 'i'}
         if self.deviceModelFilter:
             dev_filter['model'] = {
-                '$regex': self.deviceModelFilter, '$options': 'i'}
+                '$regex': self.get_final_filter(self.deviceModelFilter), '$options': 'i'}
         return dev_filter
 
 
@@ -291,24 +302,6 @@ def match_include_condition(input_item, config_line):
             match_result = get_matched_content(config_line, include_condition)
             if match_result:
                 return True
-        if Variable_Tag in include_condition:
-            vars = re.findall(r'\$[^ ]+', include_condition)
-            real_regex = re.sub(r'\$[^ ]+', r'(\\S+)', include_condition)
-            match_result = get_matched_content(config_line, '', real_regex)
-            if match_result:
-                match_value = match_result[0]
-                if isinstance(match_value, str) == 1:
-                    var_name = vars[0]
-                    if var_name not in input_item.var2Values.keys():
-                        input_item.var2Values[var_name] = set()
-                    input_item.var2Values[var_name].add(match_value)
-                if isinstance(match_value, tuple):
-                    for index in range(len(vars)):
-                        var_name = vars[index]
-                        if var_name not in input_item.var2Values.keys():
-                            input_item.var2Values[var_name] = set()
-                        input_item.var2Values[var_name].add(match_value[index])
-                return True
         if Regex_Tag in include_condition:
             regex = include_condition.split(Regex_Tag)[1].strip()
             pos = regex.find(']')
@@ -345,6 +338,24 @@ def match_include_condition(input_item, config_line):
                                 for var in vars:
                                     input_item.var2Values[var_name].add(var)
                     return True
+        elif Variable_Tag in include_condition:
+            vars = re.findall(r'\$[^ ]+', include_condition)
+            real_regex = re.sub(r'\$[^ ]+', r'(\\S+)', include_condition)
+            match_result = get_matched_content(config_line, '', real_regex)
+            if match_result:
+                match_value = match_result[0]
+                if isinstance(match_value, str) == 1:
+                    var_name = vars[0]
+                    if var_name not in input_item.var2Values.keys():
+                        input_item.var2Values[var_name] = set()
+                    input_item.var2Values[var_name].add(match_value)
+                if isinstance(match_value, tuple):
+                    for index in range(len(vars)):
+                        var_name = vars[index]
+                        if var_name not in input_item.var2Values.keys():
+                            input_item.var2Values[var_name] = set()
+                        input_item.var2Values[var_name].add(match_value[index])
+                return True
     return False
 
 
@@ -395,7 +406,7 @@ def feature_check(input_items):
         devices = datamodel.QueryDeviceObjects(query)
         if not devices:
             continue
-        if not input_item.maxDeviceCount:
+        if input_item.maxDeviceCount:
             devices = devices[0: input_item.maxDeviceCount]
         for device in devices:
             device_id = device.get('_id', '')
@@ -415,6 +426,7 @@ def feature_check(input_items):
             if matched_result:
                 feature_name = input_item.featureName
                 feature_cmds = input_item.get_cliCommand()
+                input_item.clear_cache_value()
                 feature_info = {
                     'FeatureName': feature_name,
                     'DeviceName': device_name,
