@@ -426,8 +426,6 @@ def feature_check(input_items):
         devices = datamodel.QueryDeviceObjects(query)
         if not devices:
             continue
-        if input_item.maxDeviceCount:
-            devices = devices[0: input_item.maxDeviceCount]
         for device in devices:
             device_id = device.get('_id', '')
             device_name = device.get('name', '')
@@ -442,8 +440,12 @@ def feature_check(input_items):
                 if not config_content:
                     continue
                 device_config[device_name] = config_content
+            pluginfw.AddLog('Match device config: %s' % device_name)
             matched_result = match_config(input_item, config_content)
+            pluginfw.AddLog('Match device config result: %s' % str(matched_result))
             if matched_result:
+                if len(feature_results) == input_item.maxDeviceCount:
+                    break
                 feature_name = input_item.featureName
                 feature_cmds = input_item.get_cliCommand()
                 input_item.clear_cache_value()
