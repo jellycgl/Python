@@ -178,7 +178,6 @@ class FDC_Input:
     def clear_cache_value(self):
         self.var2Values = dict()
 
-
     def get_final_filter(self, filter_item):
         filters = filter_item.split(Split_Tag)
         if len(filters) <= 1:
@@ -293,32 +292,49 @@ def extract_var_name_type(var_groups):
     return rtn
 
 
-def match_include_condition(input_item, config_line):
+def match_include_condition(input_item, config):
+    matched_result = False
     include_conditions = input_item.get_feature_include()
     if not include_conditions:
-        return False
+        return matched_result
     for include_condition in include_conditions:
         if Regex_Tag not in include_condition and Variable_Tag not in include_condition:
-            match_result = get_matched_content(config_line, include_condition)
-            if match_result:
-                return True
+            match_result = get_matched_content(config, include_condition)
+            if not match_result:
+                return False
+            else:
+                matched_result = True
         if Regex_Tag in include_condition:
             regex = include_condition.split(Regex_Tag)[1].strip()
             pos = regex.find(']')
             if pos == -1:
-                match_result = get_matched_content(config_line, '', regex)
-                if match_result:
-                    return True
+                match_result = get_matched_content(config, '', regex)
+                if not match_result:
+                    return False
+                else:
+                    matched_result = True
             else:
                 var_groups = regex[1:pos]
                 var_name_types = extract_var_name_type(var_groups)
                 regex = regex[pos + 1:]
-                groups = re.findall(regex, config_line)
-                if groups:
-                    for group in groups:
-                        if isinstance(group, str):
-                            var_name = var_name_types[0][0]
-                            var_type = var_name_types[0][1]
+                groups = re.findall(regex, config)
+                if not groups:
+                    return False
+                for group in groups:
+                    if isinstance(group, str):
+                        var_name = var_name_types[0][0]
+                        var_type = var_name_types[0][1]
+                        vars = [group]
+                        if var_type == 'list':
+                            vars = group.split(',')
+                        if var_name not in input_item.var2Values.keys():
+                            input_item.var2Values[var_name] = set()
+                        for var in vars:
+                            input_item.var2Values[var_name].add(var)
+                    if isinstance(group, tuple):
+                        for index in group:
+                            var_name = var_name_types[index][0]
+                            var_type = var_name_types[index][1]
                             vars = [group]
                             if var_type == 'list':
                                 vars = group.split(',')
@@ -326,53 +342,57 @@ def match_include_condition(input_item, config_line):
                                 input_item.var2Values[var_name] = set()
                             for var in vars:
                                 input_item.var2Values[var_name].add(var)
-                        if isinstance(group, tuple):
-                            for index in group:
-                                var_name = var_name_types[index][0]
-                                var_type = var_name_types[index][1]
-                                vars = [group]
-                                if var_type == 'list':
-                                    vars = group.split(',')
-                                if var_name not in input_item.var2Values.keys():
-                                    input_item.var2Values[var_name] = set()
-                                for var in vars:
-                                    input_item.var2Values[var_name].add(var)
-                    return True
+                matched_result = True
         elif Variable_Tag in include_condition:
             vars = re.findall(r'\$[^ ]+', include_condition)
             real_regex = re.sub(r'\$[^ ]+', r'(\\S+)', include_condition)
-            match_result = get_matched_content(config_line, '', real_regex)
-            if match_result:
-                match_value = match_result[0]
-                if isinstance(match_value, str) == 1:
-                    var_name = vars[0]
+            match_result = get_matched_content(config, '', real_regex)
+            if not match_result:
+                return False
+            match_value = match_result[0]
+            if isinstance(match_value, str) == 1:
+                var_name = vars[0]
+                if var_name not in input_item.var2Values.keys():
+                    input_item.var2Values[var_name] = set()
+                input_item.var2Values[var_name].add(match_value)
+            if isinstance(match_value, tuple):
+                for index in range(len(vars)):
+                    var_name = vars[index]
                     if var_name not in input_item.var2Values.keys():
                         input_item.var2Values[var_name] = set()
-                    input_item.var2Values[var_name].add(match_value)
-                if isinstance(match_value, tuple):
-                    for index in range(len(vars)):
-                        var_name = vars[index]
-                        if var_name not in input_item.var2Values.keys():
-                            input_item.var2Values[var_name] = set()
-                        input_item.var2Values[var_name].add(match_value[index])
-                return True
-    return False
+                    input_item.var2Values[var_name].add(match_value[index])
+            matched_result = True
+    return matched_result
 
 
 def match_config(input_item, config):
-    config_lines = config.split('\n')
-    matched_result = False
-    for config_line in config_lines:
-        if match_exclude_condition(input_item, config_line):
-            pluginfw.AddLog(
-                'Matched exclude condition, the config content is "%s"' % config_line)
-            return False
-        if match_include_condition(input_item, config_line):
-            pluginfw.AddLog(
-                'Matched include condition, the config content is "%s"' % config_line)
-            matched_result = True
+    # Check Feature Exclude
+    exclude_conditions = input_item.get_feature_exclude()
+    if exclude_conditions:
+        for exclude_condition in exclude_conditions:
+            if Regex_Tag not in exclude_condition:
+                match_result = get_matched_content(config, exclude_condition)
+                if match_result:
+                    pluginfw.AddLog(
+                        'Matched exclude condition, the feature exclude is %s' % str(exclude_condition))
+                    return False
+            else:
+                exclude_condition = exclude_condition.replace(Regex_Tag, '')
+                match_result = get_matched_content(
+                    config, None, exclude_condition)
+                if match_result:
+                    pluginfw.AddLog(
+                        'Matched exclude condition, the feature exclude is %s' % str(exclude_condition))
+                    return False
+
+    # Check Feature Include
+    matched_result = match_include_condition(input_item, config)
+    if matched_result:
+        pluginfw.AddLog('Matched all feature include definition')
+        return True
+
     pluginfw.AddLog('Neither inclusion nor exclusion conditions were matched')
-    return matched_result
+    return False
 
 
 def get_data_from_file(file_full_path):
