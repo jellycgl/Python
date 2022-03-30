@@ -388,10 +388,8 @@ def match_config(input_item, config):
     # Check Feature Include
     matched_result = match_include_condition(input_item, config)
     if matched_result:
-        pluginfw.AddLog('Matched all feature include definition')
         return True
 
-    pluginfw.AddLog('Neither inclusion nor exclusion conditions were matched')
     return False
 
 
@@ -440,9 +438,7 @@ def feature_check(input_items):
                 if not config_content:
                     continue
                 device_config[device_name] = config_content
-            pluginfw.AddLog('Match device config: %s' % device_name)
             matched_result = match_config(input_item, config_content)
-            pluginfw.AddLog('Match device config result: %s' % str(matched_result))
             if matched_result:
                 if len(feature_results) == input_item.maxDeviceCount:
                     break
