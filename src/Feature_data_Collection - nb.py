@@ -317,7 +317,7 @@ def match_include_condition(input_item, config):
                 var_groups = regex[1:pos]
                 var_name_types = extract_var_name_type(var_groups)
                 regex = regex[pos + 1:]
-                groups = re.findall(regex, config)
+                groups = re.findall(regex, config, re.M)
                 if not groups:
                     return False
                 for group in groups:
