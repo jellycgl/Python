@@ -510,8 +510,6 @@ def save_input_file(root_folder, device_feature_commands, device_datas):
         if not infos:
             continue
         device_info = infos.get('devInfo')
-        pluginfw.AddLog('device_info type is %s' % str(type(device_info)))
-        pluginfw.AddLog('device_info is %s' % str(device_info))
         if not device_info or not isinstance(device_info, dict):
             continue
         row = {}
