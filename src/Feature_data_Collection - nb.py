@@ -27,7 +27,7 @@ NB_Install_Folder = r'C:\Program Files\NetBrain\Worker Server\UserData\Temp'
 
 
 # Tags
-Regex_Tag = 'regex:'
+Regex_Tag = 'regex'
 Variable_Tag = '$'
 Split_Tag = ';'
 
@@ -268,30 +268,17 @@ def get_matched_content(data, key, regex=''):
     return matched_content
 
 
-def match_exclude_condition(input_item, config_line):
-    exclude_conditions = input_item.get_feature_exclude()
-    if not exclude_conditions:
-        return False
-    for exclude_condition in exclude_conditions:
-        if Regex_Tag in exclude_condition:
-            exclude_condition = exclude_condition.replace(Regex_Tag, '')
-        match_result = get_matched_content(config_line, exclude_condition)
-        if match_result:
-            return True
-    return False
-
-
 def extract_var_name_type(var_groups):
     vars = var_groups.split(';')
     rtn = list()
     for var in vars:
         words = var.split(':')
         if len(words) == 1:
-            var_name = words[0]
+            var_name = Variable_Tag + words[0]
             var_type = 'str'
         else:
-            var_name = words[1]
-            var_type = words[0].replace('$', '')
+            var_name = Variable_Tag + words[1]
+            var_type = words[0].replace(Variable_Tag, '')
         rtn.append((var_name, var_type))
     return rtn
 
@@ -309,18 +296,21 @@ def match_include_condition(input_item, config):
             else:
                 matched_result = True
         if Regex_Tag in include_condition:
-            regex = include_condition.split(Regex_Tag)[1].strip()
-            pos = regex.find(']')
-            if pos == -1:
+            regex_prefix = include_condition
+            regex_ret = re.findall(r'regex\[(.*)\]:', include_condition)
+            if not regex_ret:
+                regex_prefix = Regex_Tag + ':'
+                regex = include_condition.split(regex_prefix)[1].strip()
                 match_result = get_matched_content(config, '', regex)
                 if not match_result:
                     return False
                 else:
                     matched_result = True
             else:
-                var_groups = regex[1:pos]
+                var_groups = regex_ret[0]
+                regex_prefix = Regex_Tag + '[' + var_groups + ']' + ':'
+                regex = include_condition.replace(regex_prefix, '')
                 var_name_types = extract_var_name_type(var_groups)
-                regex = regex[pos + 1:]
                 groups = re.findall(regex, config, re.M)
                 if not groups:
                     return False
@@ -381,7 +371,8 @@ def match_config(input_item, config):
                         'Matched exclude condition, the feature exclude is %s' % str(exclude_condition))
                     return False
             else:
-                exclude_condition = exclude_condition.replace(Regex_Tag, '')
+                regex_prefix = Regex_Tag + ':'
+                exclude_condition = exclude_condition.replace(regex_prefix, '')
                 match_result = get_matched_content(
                     config, None, exclude_condition)
                 if match_result:
