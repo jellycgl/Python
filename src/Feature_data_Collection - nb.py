@@ -286,8 +286,12 @@ def extract_var_name_type(var_groups):
     rtn = list()
     for var in vars:
         words = var.split(':')
-        var_type = 'str' if len(words) == 1 else words[1]
-        var_name = words[0]
+        if len(words) == 1:
+            var_name = words[0]
+            var_type = 'str'
+        else:
+            var_name = words[1]
+            var_type = words[0].replace('$', '')
         rtn.append((var_name, var_type))
     return rtn
 
