@@ -168,8 +168,9 @@ class FDC_Input:
                 if len(commands) == self.maxCliCommandCount:
                     return commands
             else:
-                result = cli_cmd
                 for var, values in self.var2Values.items():
+                    if var not in cli_cmd:
+                        continue
                     for value in values:
                         result = cli_cmd.replace(var, value)
                         commands.add(result)
@@ -636,7 +637,7 @@ def save_output(results):
                 filePath = os.path.join(folderName, filename)
                 fileInnerPath = filePath[len(root_folder) + 1:]
                 zipObj.write(filePath, fileInnerPath)
-    
+
     shutil.rmtree(root_folder)
 
     zip_file_content = get_data_from_file(zip_file_path)
