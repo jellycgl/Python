@@ -161,15 +161,17 @@ class FDC_Input:
             return commands
         cli_cmds = self.cliCommand.split(Split_Tag)
         for cli_cmd in cli_cmds:
+            if not cli_cmd:
+                continue
             if Variable_Tag not in cli_cmd:
                 commands.add(cli_cmd)
                 if len(commands) == self.maxCliCommandCount:
                     return commands
             else:
-                result = self.cliCommand
+                result = cli_cmd
                 for var, values in self.var2Values.items():
                     for value in values:
-                        result = self.cliCommand.replace(var, value)
+                        result = cli_cmd.replace(var, value)
                         commands.add(result)
                         if len(commands) == self.maxCliCommandCount:
                             return commands
@@ -419,6 +421,7 @@ def feature_check(input_items):
         devices = datamodel.QueryDeviceObjects(query)
         if not devices:
             continue
+        matched_device_count = 0
         for device in devices:
             device_id = device.get('_id', '')
             device_name = device.get('name', '')
@@ -433,10 +436,11 @@ def feature_check(input_items):
                 if not config_content:
                     continue
                 device_config[device_name] = config_content
+            if matched_device_count == input_item.maxDeviceCount:
+                break
             matched_result = match_config(input_item, config_content)
             if matched_result:
-                if len(feature_results) == input_item.maxDeviceCount:
-                    break
+                matched_device_count = matched_device_count + 1
                 feature_name = input_item.featureName
                 feature_cmds = input_item.get_cliCommand()
                 input_item.clear_cache_value()
@@ -632,6 +636,7 @@ def save_output(results):
                 filePath = os.path.join(folderName, filename)
                 fileInnerPath = filePath[len(root_folder) + 1:]
                 zipObj.write(filePath, fileInnerPath)
+    
     shutil.rmtree(root_folder)
 
     zip_file_content = get_data_from_file(zip_file_path)
