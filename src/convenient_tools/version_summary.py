@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 from datetime import datetime
 import matplotlib.dates as mdates
 
+# 示例数据
 # 示例数据：每个版本对应一个发布时间的列表
 version_data = {
     "R11.0": ["2022-03-11", 
@@ -66,15 +67,16 @@ for version in version_data:
 # 创建图形和坐标轴
 fig, ax = plt.subplots(figsize=(10, 6))
 
-# 为每个版本画出时间点（纵轴为版本索引，横轴为时间）
+# 为每个版本画出时间点（横坐标为时间，纵坐标为版本索引）
 for idx, (version, dates) in enumerate(version_data.items()):
-    ax.plot_date(dates, [idx]*len(dates), 'o-', label=version)
+    y_positions = [idx] * len(dates)
+    ax.plot(dates, y_positions, 'o-', label=version)
 
 # 设置 Y 轴：版本标签
 ax.set_yticks(range(len(version_data)))
 ax.set_yticklabels(version_data.keys())
 
-# 设置 X 轴：时间格式
+# 设置 X 轴：日期格式
 ax.xaxis.set_major_locator(mdates.MonthLocator())
 ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
 
@@ -86,6 +88,6 @@ plt.grid(True)
 plt.tight_layout()
 plt.legend()
 
-# 保存为图片
+# 保存和展示图像
 plt.savefig("version_release_timeline.png")
 plt.show()
