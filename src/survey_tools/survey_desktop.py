@@ -666,153 +666,161 @@ class SurveyApp(tk.Tk):
     # ── Sidebar ────────────────────────────────────────────────────────────
 
     def _build_sidebar(self):
-        """Rebuild the navigation tree in the sidebar."""
+        """Rebuild the navigation sidebar — top-level chapters only."""
         for w in self._sidebar.winfo_children():
             w.destroy()
         self._nav_items = []
 
-        # Sidebar top label
+        # Header label
         tk.Label(
             self._sidebar, text="Sections",
             bg=C["sidebar_bg"], fg=C["text_muted"],
             font=FONT_SMALL, anchor="w", padx=16, pady=10,
         ).pack(fill="x")
-
         tk.Frame(self._sidebar, bg=C["border"], height=1).pack(fill="x")
 
-        # Scrollable nav list
+        # Scrollable list of chapter buttons
         nav_scroll = ScrollableFrame(self._sidebar, bg=C["sidebar_bg"])
         nav_scroll.pack(fill="both", expand=True)
         nav_frame = nav_scroll.inner_frame
 
-        # "Home" item
-        self._add_nav_item(
-            nav_frame,
-            node_id="__home__",
-            label="Home",
-            depth=0,
-            is_leaf=False,
-            on_click=self._show_home,
-        )
+        # Home button
+        self._add_nav_btn(nav_frame, "__home__", "Home", self._show_home)
 
-        # Document sections
-        def add_subtree(node: Node, depth: int):
-            if node.level == 0:
-                for child in node.children:
-                    add_subtree(child, 0)
-                return
-            item_id = node.breadcrumb()
-            self._add_nav_item(
-                nav_frame,
-                node_id=item_id,
-                label=node.title,
-                depth=depth,
-                is_leaf=node.is_leaf(),
-                on_click=(
-                    (lambda nid: lambda: self._navigate_to(nid))(item_id)
+        # One button per top-level chapter
+        if self.root_node:
+            for node in self.root_node.children:
+                nid = node.breadcrumb()
+                click = (
+                    (lambda nid: lambda: self._navigate_to(nid))(nid)
                     if node.is_leaf()
                     else (lambda n: lambda: self._show_branch(n))(node)
-                ),
-            )
-            for child in node.children:
-                add_subtree(child, depth + 1)
+                )
+                self._add_nav_btn(nav_frame, nid, node.title, click, node=node)
 
-        if self.root_node:
-            add_subtree(self.root_node, 0)
-
-        # Summary item at the bottom
-        tk.Frame(self._sidebar, bg=C["border"], height=1).pack(
-            side="bottom", fill="x"
+        # Divider + Summary & Save at bottom of scroll area
+        tk.Frame(nav_frame, bg=C["border"], height=1).pack(
+            fill="x", padx=12, pady=(8, 0)
         )
-        self._add_nav_item(
-            nav_frame,
-            node_id="__summary__",
-            label="Summary & Save",
-            depth=0,
-            is_leaf=False,
-            on_click=self._show_summary,
+        self._add_nav_btn(
+            nav_frame, "__summary__", "Summary & Save", self._show_summary
         )
 
-    def _add_nav_item(
+    def _add_nav_btn(
         self,
         parent,
         node_id: str,
         label: str,
-        depth: int,
-        is_leaf: bool,
         on_click,
+        node: "Node | None" = None,
     ):
-        indent = 14 + depth * 14
-        is_done = self._is_section_done(node_id)
+        """Add a full-width button to the sidebar navigation."""
+        is_on = (node_id == self._current_id)
+        bg = C["accent"] if is_on else C["sidebar_bg"]
+        fg = "#FFFFFF" if is_on else C["text_primary"]
 
-        frame = tk.Frame(parent, bg=C["sidebar_bg"], cursor="hand2")
-        frame.pack(fill="x")
+        outer = tk.Frame(parent, bg=C["sidebar_bg"])
+        outer.pack(fill="x", padx=10, pady=2)
 
-        inner = tk.Frame(frame, bg=C["sidebar_bg"])
-        inner.pack(fill="x", padx=(indent, 8), pady=1)
+        btn_frame = tk.Frame(outer, bg=bg, cursor="hand2")
+        btn_frame.pack(fill="x")
 
-        # Done indicator dot
-        dot_color = C["green"] if is_done else C["border"]
-        dot = tk.Label(
-            inner, text="●", bg=C["sidebar_bg"],
-            fg=dot_color, font=(FONT_FAMILY, 8),
-        )
-        dot.pack(side="left", padx=(0, 6))
+        row = tk.Frame(btn_frame, bg=bg)
+        row.pack(fill="x", padx=12, pady=9)
 
-        shortened = label if len(label) <= 36 else label[:34] + "…"
-        txt_color = C["accent"] if is_leaf else C["text_primary"]
+        short = label if len(label) <= 26 else label[:24] + "…"
+        lbl = tk.Label(row, text=short, bg=bg, fg=fg, font=FONT, anchor="w")
+        lbl.pack(side="left", fill="x", expand=True)
 
-        lbl = tk.Label(
-            inner, text=shortened, bg=C["sidebar_bg"],
-            fg=txt_color, font=FONT_SMALL if depth > 0 else FONT,
-            anchor="w",
-        )
-        lbl.pack(side="left", fill="x", expand=True, pady=3)
+        # Progress badge for chapter nodes with children
+        badge_lbl = None
+        if node:
+            leaves = node.all_leaves()
+            total = len(leaves)
+            if total > 0:
+                done_count = sum(
+                    1 for lf in leaves if self._is_section_done(lf.breadcrumb())
+                )
+                all_done = done_count == total
+                badge_bg = C["green"] if all_done else ("#6366F1" if is_on else C["border"])
+                badge_fg = "#FFFFFF" if (all_done or is_on) else C["text_muted"]
+                badge_lbl = tk.Label(
+                    row, text=f"{done_count}/{total}",
+                    bg=badge_bg, fg=badge_fg,
+                    font=(FONT_FAMILY, 8, "bold"), padx=5, pady=1,
+                )
+                badge_lbl.pack(side="right")
 
-        # Store references for active-state updates
         item = {
-            "id":    node_id,
-            "frame": frame,
-            "inner": inner,
-            "lbl":   lbl,
-            "dot":   dot,
+            "id":     node_id,
+            "frame":  btn_frame,
+            "outer":  outer,
+            "row":    row,
+            "lbl":    lbl,
+            "badge":  badge_lbl,
+            "node":   node,
         }
         self._nav_items.append(item)
 
+        all_widgets = [btn_frame, row, lbl]
+        if badge_lbl:
+            all_widgets.append(badge_lbl)
+
         def _hover_on(_):
-            if node_id != self._current_id:
-                frame.config(bg=C["accent_lt"])
-                inner.config(bg=C["accent_lt"])
-                lbl.config(bg=C["accent_lt"])
-                dot.config(bg=C["accent_lt"])
+            if node_id != self._current_id and not self._is_ancestor_active(node_id):
+                for w in all_widgets:
+                    w.config(bg=C["accent_lt"])
+                lbl.config(fg=C["accent"])
 
         def _hover_off(_):
-            if node_id != self._current_id:
-                bg = C["sidebar_bg"]
-                frame.config(bg=bg); inner.config(bg=bg)
-                lbl.config(bg=bg);   dot.config(bg=bg)
+            if node_id != self._current_id and not self._is_ancestor_active(node_id):
+                for w in all_widgets:
+                    w.config(bg=C["sidebar_bg"])
+                lbl.config(fg=C["text_primary"])
 
         def _click(_): on_click()
 
-        for w in (frame, inner, dot, lbl):
+        for w in all_widgets:
             w.bind("<Enter>",    _hover_on)
             w.bind("<Leave>",    _hover_off)
             w.bind("<Button-1>", _click)
 
+    def _is_ancestor_active(self, node_id: str) -> bool:
+        """True if the current view is a descendant of this sidebar button."""
+        if not self._current_id or node_id in ("__home__", "__summary__"):
+            return False
+        return self._current_id.startswith(node_id + " > ")
+
     def _refresh_nav(self):
-        """Update dot colours and active highlight without full rebuild."""
+        """Update button colours/highlights in the sidebar without full rebuild."""
         for item in self._nav_items:
             nid   = item["id"]
-            is_on = (nid == self._current_id)
-            is_done = self._is_section_done(nid)
+            is_on = (nid == self._current_id) or self._is_ancestor_active(nid)
 
-            bg = C["sidebar_sel"] if is_on else C["sidebar_bg"]
-            dot_c = C["green"] if is_done else (C["accent"] if is_on else C["border"])
+            bg = C["accent"] if is_on else C["sidebar_bg"]
+            fg = "#FFFFFF"   if is_on else C["text_primary"]
 
             item["frame"].config(bg=bg)
-            item["inner"].config(bg=bg)
-            item["lbl"].config(bg=bg)
-            item["dot"].config(bg=bg, fg=dot_c)
+            item["row"].config(bg=bg)
+            item["lbl"].config(bg=bg, fg=fg)
+
+            # Update progress badge colours
+            badge = item.get("badge")
+            if badge:
+                node = item.get("node")
+                if node:
+                    leaves = node.all_leaves()
+                    done_count = sum(
+                        1 for lf in leaves
+                        if self._is_section_done(lf.breadcrumb())
+                    )
+                    all_done = done_count == len(leaves)
+                    badge_bg = C["green"] if all_done else ("#6366F1" if is_on else C["border"])
+                    badge_fg = "#FFFFFF" if (all_done or is_on) else C["text_muted"]
+                    badge.config(
+                        bg=badge_bg, fg=badge_fg,
+                        text=f"{done_count}/{len(leaves)}",
+                    )
 
     def _is_section_done(self, section_id: str) -> bool:
         """Return True if any non-empty answer was recorded for this section."""
@@ -981,41 +989,79 @@ class SurveyApp(tk.Tk):
         self._section_header(pad, node.title, node.breadcrumb())
 
         for child in node.children:
-            done = all(
-                self._is_section_done(leaf.breadcrumb())
-                for leaf in child.all_leaves()
+            leaves = child.all_leaves()
+            done_count = sum(
+                1 for lf in leaves if self._is_section_done(lf.breadcrumb())
             )
-            card = tk.Frame(
-                pad, bg=C["card_bg"],
-                highlightthickness=1,
-                highlightbackground=C["green"] if done else C["border"],
-                cursor="hand2",
-            )
-            card.pack(fill="x", pady=4)
+            all_done = done_count == len(leaves)
 
-            inner = tk.Frame(card, bg=C["card_bg"])
-            inner.pack(fill="x", padx=14, pady=10)
-
-            if done:
-                tk.Label(
-                    inner, text="done", bg=C["green_lt"], fg="#065F46",
-                    font=(FONT_FAMILY, 8, "bold"), padx=6, pady=2,
-                ).pack(side="right")
-
-            tk.Label(
-                inner, text=child.title, bg=C["card_bg"],
-                fg=C["accent"] if child.is_leaf() else C["text_primary"],
-                font=FONT_BOLD, anchor="w",
-            ).pack(fill="x", side="left")
-
-            def _click(n):
+            def _make_click(n):
                 return lambda _: (
                     self._navigate_to(n.breadcrumb())
                     if n.is_leaf()
                     else self._show_branch(n)
                 )
-            card.bind("<Button-1>", _click(child))
-            inner.bind("<Button-1>", _click(child))
+
+            # Button row
+            btn = tk.Frame(
+                pad, bg=C["card_bg"], cursor="hand2",
+                highlightthickness=1,
+                highlightbackground=C["green"] if all_done else C["border"],
+            )
+            btn.pack(fill="x", pady=3)
+
+            inner = tk.Frame(btn, bg=C["card_bg"])
+            inner.pack(fill="x", padx=16, pady=12)
+
+            # Arrow / chevron on right
+            arrow = tk.Label(
+                inner,
+                text="›" if not child.is_leaf() else "→",
+                bg=C["card_bg"], fg=C["text_muted"],
+                font=(FONT_FAMILY, 16),
+            )
+            arrow.pack(side="right", padx=(8, 0))
+
+            # Progress or done badge
+            if all_done:
+                badge = tk.Label(
+                    inner, text="done",
+                    bg=C["green_lt"], fg="#065F46",
+                    font=(FONT_FAMILY, 8, "bold"), padx=8, pady=2,
+                )
+            else:
+                badge = tk.Label(
+                    inner, text=f"{done_count}/{len(leaves)}",
+                    bg=C["accent_lt"], fg=C["accent"],
+                    font=(FONT_FAMILY, 8, "bold"), padx=8, pady=2,
+                )
+            badge.pack(side="right", padx=(0, 8))
+
+            lbl = tk.Label(
+                inner, text=child.title, bg=C["card_bg"],
+                fg=C["text_primary"], font=FONT_BOLD, anchor="w",
+            )
+            lbl.pack(side="left", fill="x", expand=True)
+
+            # Hover effects
+            all_w = [btn, inner, lbl, arrow, badge]
+
+            def _hover_on(_, b=btn, i=inner, l_=lbl, a=arrow, bg_=badge):
+                b.config(highlightbackground=C["accent"])
+                for w in (b, i, l_, a, bg_):
+                    w.config(bg=C["accent_lt"])
+                l_.config(fg=C["accent"])
+
+            def _hover_off(_, b=btn, i=inner, l_=lbl, a=arrow, bg_=badge, done_=all_done):
+                b.config(highlightbackground=C["green"] if done_ else C["border"])
+                for w in (b, i, l_, a, bg_):
+                    w.config(bg=C["card_bg"])
+                l_.config(fg=C["text_primary"])
+
+            for w in all_w:
+                w.bind("<Button-1>", _make_click(child))
+                w.bind("<Enter>",    _hover_on)
+                w.bind("<Leave>",    _hover_off)
 
         # "Fill all" button
         btn_row = tk.Frame(pad, bg=C["bg"])
