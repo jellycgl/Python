@@ -408,11 +408,14 @@ def _he(text: str) -> str:
 class ScrollableFrame(tk.Frame):
     """
     A frame that can scroll vertically.
-    Attach child widgets to .inner_frame.
+    The scrollbar is hidden when all content fits and appears automatically
+    when content overflows.  Attach child widgets to .inner_frame.
     """
 
     def __init__(self, parent, bg: str = C["bg"], **kwargs):
         super().__init__(parent, bg=bg, **kwargs)
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=1)
 
         self._canvas = tk.Canvas(self, bg=bg, highlightthickness=0)
         self._scroll = ttk.Scrollbar(
@@ -420,10 +423,9 @@ class ScrollableFrame(tk.Frame):
         )
         self.inner_frame = tk.Frame(self._canvas, bg=bg)
 
-        self._canvas.configure(yscrollcommand=self._scroll.set)
-
-        self._scroll.pack(side="right", fill="y")
-        self._canvas.pack(side="left", fill="both", expand=True)
+        self._canvas.configure(yscrollcommand=self._set_scrollbar)
+        self._canvas.grid(row=0, column=0, sticky="nsew")
+        # scrollbar starts hidden; shown dynamically via _set_scrollbar
 
         self._win_id = self._canvas.create_window(
             (0, 0), window=self.inner_frame, anchor="nw"
@@ -434,6 +436,14 @@ class ScrollableFrame(tk.Frame):
         self._canvas.bind_all("<MouseWheel>",  self._on_mousewheel)
         self._canvas.bind_all("<Button-4>",    self._on_mousewheel)
         self._canvas.bind_all("<Button-5>",    self._on_mousewheel)
+
+    def _set_scrollbar(self, first, last):
+        """Show the scrollbar only when content doesn't fully fit."""
+        if float(first) <= 0.0 and float(last) >= 1.0:
+            self._scroll.grid_remove()
+        else:
+            self._scroll.grid(row=0, column=1, sticky="ns")
+        self._scroll.set(first, last)
 
     def _on_frame_configure(self, _event=None):
         self._canvas.configure(scrollregion=self._canvas.bbox("all"))
@@ -508,7 +518,7 @@ class SurveyApp(tk.Tk):
 
     def __init__(self, preload_docx: str | None = None):
         super().__init__()
-        self.title("Survey Tool")
+        self.title("Controler Discovery Data Collection")
         self.geometry("1100x720")
         self.minsize(800, 560)
         self.configure(bg=C["bg"])
@@ -714,22 +724,30 @@ class SurveyApp(tk.Tk):
         on_click,
         node: "Node | None" = None,
     ):
-        """Add a full-width button to the sidebar navigation."""
+        """Add a full-width bordered button to the sidebar navigation."""
         is_on = (node_id == self._current_id)
-        bg = C["accent"] if is_on else C["sidebar_bg"]
-        fg = "#FFFFFF" if is_on else C["text_primary"]
+        bg     = C["accent"] if is_on else C["sidebar_bg"]
+        fg     = "#FFFFFF"   if is_on else C["text_primary"]
+        border = C["accent"] if is_on else C["border"]
 
+        # Outer wrapper — fills sidebar width with small vertical gap only
         outer = tk.Frame(parent, bg=C["sidebar_bg"])
-        outer.pack(fill="x", padx=10, pady=2)
+        outer.pack(fill="x", padx=8, pady=3)
 
-        btn_frame = tk.Frame(outer, bg=bg, cursor="hand2")
+        # Bordered button frame
+        btn_frame = tk.Frame(
+            outer, bg=bg, cursor="hand2",
+            highlightthickness=1, highlightbackground=border,
+        )
         btn_frame.pack(fill="x")
 
         row = tk.Frame(btn_frame, bg=bg)
-        row.pack(fill="x", padx=12, pady=9)
+        row.pack(fill="x", padx=12, pady=10)
 
-        short = label if len(label) <= 26 else label[:24] + "…"
-        lbl = tk.Label(row, text=short, bg=bg, fg=fg, font=FONT, anchor="w")
+        lbl = tk.Label(
+            row, text=label, bg=bg, fg=fg, font=FONT,
+            anchor="w", wraplength=160, justify="left",
+        )
         lbl.pack(side="left", fill="x", expand=True)
 
         # Progress badge for chapter nodes with children
@@ -742,8 +760,8 @@ class SurveyApp(tk.Tk):
                     1 for lf in leaves if self._is_section_done(lf.breadcrumb())
                 )
                 all_done = done_count == total
-                badge_bg = C["green"] if all_done else ("#6366F1" if is_on else C["border"])
-                badge_fg = "#FFFFFF" if (all_done or is_on) else C["text_muted"]
+                badge_bg = C["green"]   if all_done else ("#6366F1" if is_on else C["border"])
+                badge_fg = "#FFFFFF"    if (all_done or is_on) else C["text_muted"]
                 badge_lbl = tk.Label(
                     row, text=f"{done_count}/{total}",
                     bg=badge_bg, fg=badge_fg,
@@ -768,15 +786,21 @@ class SurveyApp(tk.Tk):
 
         def _hover_on(_):
             if node_id != self._current_id and not self._is_ancestor_active(node_id):
-                for w in all_widgets:
+                btn_frame.config(bg=C["accent_lt"], highlightbackground=C["accent"])
+                for w in (row, lbl):
                     w.config(bg=C["accent_lt"])
                 lbl.config(fg=C["accent"])
+                if badge_lbl:
+                    badge_lbl.config(bg=C["accent_lt"])
 
         def _hover_off(_):
             if node_id != self._current_id and not self._is_ancestor_active(node_id):
-                for w in all_widgets:
+                btn_frame.config(bg=C["sidebar_bg"], highlightbackground=C["border"])
+                for w in (row, lbl):
                     w.config(bg=C["sidebar_bg"])
                 lbl.config(fg=C["text_primary"])
+                if badge_lbl:
+                    badge_lbl.config(bg=C["border"])
 
         def _click(_): on_click()
 
@@ -797,10 +821,11 @@ class SurveyApp(tk.Tk):
             nid   = item["id"]
             is_on = (nid == self._current_id) or self._is_ancestor_active(nid)
 
-            bg = C["accent"] if is_on else C["sidebar_bg"]
-            fg = "#FFFFFF"   if is_on else C["text_primary"]
+            bg     = C["accent"] if is_on else C["sidebar_bg"]
+            fg     = "#FFFFFF"   if is_on else C["text_primary"]
+            border = C["accent"] if is_on else C["border"]
 
-            item["frame"].config(bg=bg)
+            item["frame"].config(bg=bg, highlightbackground=border)
             item["row"].config(bg=bg)
             item["lbl"].config(bg=bg, fg=fg)
 
