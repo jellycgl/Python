@@ -1,0 +1,1505 @@
+"""
+survey_desktop.py  —  Desktop Survey Tool for Word Documents
+=============================================================
+Run directly:
+    python survey_desktop.py
+    python survey_desktop.py --docx path/to/file.docx
+
+A native desktop window opens immediately.  No browser, no server.
+
+Workflow:
+  1. Pick a .docx questionnaire file (or pass --docx on the CLI).
+  2. Navigate sections using the left-side tree.
+  3. Fill in each leaf section (text fields + multi-select checkboxes).
+  4. Click "Save as HTML" on the Summary page — a formatted HTML report
+     is written to disk and the save path is shown in a dialog.
+
+Requirements:
+    pip install python-docx
+    tkinter  — ships with the standard Python installer on Windows and macOS.
+               Linux:  sudo apt install python3-tk   (Debian/Ubuntu)
+                       sudo dnf install python3-tkinter  (Fedora/RHEL)
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import sys
+import textwrap
+from datetime import datetime
+from pathlib import Path
+
+# ── python-docx ──────────────────────────────────────────────────────────────
+try:
+    from docx import Document
+    from docx.text.paragraph import Paragraph as DocxPara
+    from docx.table import Table as DocxTable
+except ImportError:
+    sys.exit(
+        "python-docx is not installed.\n"
+        "Run:  pip install python-docx\n"
+    )
+
+# ── tkinter ───────────────────────────────────────────────────────────────────
+try:
+    import tkinter as tk
+    from tkinter import filedialog, messagebox, ttk
+except ImportError:
+    sys.exit(
+        "tkinter is not available.\n"
+        "Windows / macOS: reinstall Python from python.org (include Tcl/Tk).\n"
+        "Ubuntu / Debian: sudo apt install python3-tk\n"
+        "Fedora / RHEL:   sudo dnf install python3-tkinter\n"
+    )
+
+
+# =============================================================================
+# Colour palette & fonts  (easy to customise)
+# =============================================================================
+C = {
+    "bg":           "#F7F8FA",   # window background
+    "sidebar_bg":   "#FFFFFF",   # sidebar background
+    "sidebar_sel":  "#EEF2FF",   # selected nav item background
+    "sidebar_txt":  "#374151",   # normal nav text
+    "accent":       "#4F46E5",   # indigo accent (buttons, active items)
+    "accent_lt":    "#EEF2FF",   # light accent fill
+    "btn_fg":       "#FFFFFF",   # primary button text
+    "btn_sec_bg":   "#F3F4F6",   # secondary button background
+    "btn_sec_fg":   "#374151",   # secondary button text
+    "card_bg":      "#FFFFFF",   # card / panel background
+    "border":       "#E5E7EB",   # subtle border
+    "text_primary": "#111827",   # main text
+    "text_muted":   "#6B7280",   # secondary / hint text
+    "green":        "#10B981",   # done status
+    "green_lt":     "#D1FAE5",   # done badge fill
+    "red":          "#EF4444",   # error
+    "progress_bg":  "#E5E7EB",   # progress bar trough
+    "progress_fg":  "#4F46E5",   # progress bar fill
+    "check_on":     "#4F46E5",   # checkbox selected border
+    "check_on_bg":  "#EEF2FF",   # checkbox selected fill
+    "divider":      "#F3F4F6",   # divider lines inside forms
+}
+
+FONT_FAMILY = "Segoe UI" if sys.platform == "win32" else (
+    "SF Pro Display" if sys.platform == "darwin" else "DejaVu Sans"
+)
+FONT        = (FONT_FAMILY, 10)
+FONT_BOLD   = (FONT_FAMILY, 10, "bold")
+FONT_SMALL  = (FONT_FAMILY, 9)
+FONT_TITLE  = (FONT_FAMILY, 15, "bold")
+FONT_H2     = (FONT_FAMILY, 12, "bold")
+FONT_CODE   = ("Courier New" if sys.platform == "win32" else "Courier", 9)
+
+
+# =============================================================================
+# Document parser
+# =============================================================================
+HEADING_STYLES = {
+    "Heading 1": 1, "Heading 2": 2, "Heading 3": 3,
+    "Heading 4": 4, "Heading 5": 5,
+}
+CHECKBOX_RE = re.compile(r"☐\s*|□\s*|\[\s*\]\s*")
+
+
+class Node:
+    """One node in the heading hierarchy of the parsed .docx file."""
+
+    def __init__(self, level: int, title: str, parent: "Node | None" = None):
+        self.level   = level
+        self.title   = title
+        self.parent  = parent
+        self.children: list[Node]      = []
+        self.fields:   list[FormField] = []
+
+    # ------------------------------------------------------------------
+    def is_leaf(self) -> bool:
+        return len(self.children) == 0
+
+    def breadcrumb(self) -> str:
+        """Full path string used as a unique key, e.g. '1. Intro > 1.1 Auth'."""
+        parts, node = [], self
+        while node and node.level > 0:
+            parts.append(node.title)
+            node = node.parent
+        return " > ".join(reversed(parts))
+
+    def all_leaves(self) -> list["Node"]:
+        """Return every leaf node in document order under this subtree."""
+        if self.is_leaf():
+            return [self]
+        result = []
+        for child in self.children:
+            result.extend(child.all_leaves())
+        return result
+
+
+class FormField:
+    """One answerable item (text input or multi-select checkboxes)."""
+
+    def __init__(self, ftype: str, label: str, options: list[str] | None = None):
+        self.ftype   = ftype          # "text" | "checkbox" | "table_row"
+        self.label   = label
+        self.options = options or []
+
+
+def _extract_checkboxes(text: str) -> list[str]:
+    """Split on checkbox markers and return option labels."""
+    if not CHECKBOX_RE.search(text):
+        return []
+    return [p.strip() for p in CHECKBOX_RE.split(text) if p.strip()]
+
+
+def parse_document(docx_path: str) -> Node:
+    """
+    Walk every paragraph and table in the .docx, build a Node tree.
+    Returns the invisible root (level 0).
+    """
+    doc   = Document(docx_path)
+    root  = Node(level=0, title="ROOT")
+    stack: list[Node] = [root]
+
+    def cur() -> Node:
+        return stack[-1]
+
+    for block in doc.element.body:
+        tag = block.tag.split("}")[-1] if "}" in block.tag else block.tag
+
+        if tag == "p":
+            para  = DocxPara(block, doc)
+            sname = para.style.name if para.style else ""
+            level = HEADING_STYLES.get(sname, 0)
+            raw   = "".join(r.text for r in para.runs).strip()
+            if not raw:
+                continue
+
+            if level:
+                while len(stack) > 1 and stack[-1].level >= level:
+                    stack.pop()
+                node = Node(level=level, title=raw.strip("*_ "), parent=stack[-1])
+                stack[-1].children.append(node)
+                stack.append(node)
+            else:
+                parent = cur()
+                cbs = _extract_checkboxes(raw)
+                if cbs:
+                    if parent.fields and parent.fields[-1].ftype == "checkbox":
+                        parent.fields[-1].options.extend(cbs)
+                    else:
+                        parent.fields.append(
+                            FormField("checkbox", "Select all that apply", cbs)
+                        )
+                elif len(raw) > 5 and not raw.startswith("*Note*"):
+                    parent.fields.append(FormField("text", raw[:120]))
+
+        elif tag == "tbl":
+            tbl    = DocxTable(block, doc)
+            parent = cur()
+            for i, row in enumerate(tbl.rows):
+                cells = [c.text.strip() for c in row.cells]
+                if not any(cells):
+                    continue
+                if i == 0 and all(c == c.upper() or not c for c in cells):
+                    continue
+                label  = cells[0] if cells[0] else f"Row {i+1}"
+                if len(label) < 3:
+                    continue
+                second = cells[1] if len(cells) > 1 else ""
+                cbs    = _extract_checkboxes(second)
+                if cbs:
+                    parent.fields.append(FormField("checkbox", label, cbs))
+                else:
+                    parent.fields.append(FormField("table_row", label))
+
+    return root
+
+
+# =============================================================================
+# HTML export
+# =============================================================================
+
+def build_html_report(
+    docx_name: str,
+    responses: dict[str, dict[str, object]],
+    total_leaves: int,
+) -> str:
+    """
+    Generate a self-contained, styled HTML report from all collected answers.
+    Returns the full HTML string.
+    """
+    done_count = sum(
+        1 for fields in responses.values()
+        if any(
+            (isinstance(v, list) and v) or (isinstance(v, str) and v.strip())
+            for v in fields.values()
+        )
+    )
+    pct = int(done_count / total_leaves * 100) if total_leaves else 0
+
+    def row_html(label: str, value: object) -> str:
+        if isinstance(value, list):
+            display = ", ".join(value) if value else "<em>—</em>"
+        else:
+            display = value.strip() if value else "<em>—</em>"
+        return (
+            f'<tr><td class="key">{_he(label)}</td>'
+            f'<td class="val">{display}</td></tr>\n'
+        )
+
+    sections_html = ""
+    for section, fields in responses.items():
+        rows = "".join(row_html(k, v) for k, v in fields.items())
+        sections_html += f"""
+        <div class="card">
+          <div class="card-header">{_he(section)}</div>
+          <table class="data-table">{rows}</table>
+        </div>
+        """
+
+    now = datetime.now().strftime("%Y-%m-%d  %H:%M")
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Survey Results — {_he(docx_name)}</title>
+<style>
+  /* ── reset & base ── */
+  *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    font-size: 14px; line-height: 1.6;
+    background: #F0F2F5; color: #111827; min-height: 100vh;
+  }}
+
+  /* ── header ── */
+  .page-header {{
+    background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%);
+    color: #fff; padding: 36px 48px 28px;
+  }}
+  .page-header h1 {{ font-size: 24px; font-weight: 700; margin-bottom: 6px; }}
+  .page-header .meta {{ font-size: 13px; opacity: .8; }}
+
+  /* ── progress bar ── */
+  .progress-wrap {{
+    background: rgba(255,255,255,.25); border-radius: 99px;
+    height: 10px; margin: 18px 0 6px; overflow: hidden;
+  }}
+  .progress-bar {{
+    height: 10px; border-radius: 99px;
+    background: #fff;
+    width: {pct}%;
+    transition: width .6s ease;
+  }}
+  .progress-label {{ font-size: 12px; opacity: .85; }}
+
+  /* ── stats row ── */
+  .stats {{
+    display: flex; gap: 16px; padding: 20px 48px;
+    background: #fff; border-bottom: 1px solid #E5E7EB;
+    flex-wrap: wrap;
+  }}
+  .stat {{
+    background: #F9FAFB; border: 1px solid #E5E7EB;
+    border-radius: 10px; padding: 12px 20px; min-width: 140px;
+  }}
+  .stat-num {{ font-size: 26px; font-weight: 700; color: #4F46E5; }}
+  .stat-label {{ font-size: 12px; color: #6B7280; margin-top: 2px; }}
+
+  /* ── main content ── */
+  .content {{ max-width: 900px; margin: 28px auto; padding: 0 24px 60px; }}
+
+  /* ── cards ── */
+  .card {{
+    background: #fff; border: 1px solid #E5E7EB;
+    border-radius: 12px; margin-bottom: 18px; overflow: hidden;
+  }}
+  .card-header {{
+    background: #F9FAFB; border-bottom: 1px solid #E5E7EB;
+    padding: 12px 20px; font-weight: 600; font-size: 13px;
+    color: #374151; letter-spacing: .01em;
+  }}
+
+  /* ── data table inside cards ── */
+  .data-table {{ width: 100%; border-collapse: collapse; }}
+  .data-table tr:not(:last-child) td {{
+    border-bottom: 1px solid #F3F4F6;
+  }}
+  .data-table td {{ padding: 9px 20px; vertical-align: top; }}
+  .data-table td.key {{
+    width: 38%; color: #6B7280; font-size: 13px;
+    padding-right: 12px; font-weight: 500;
+  }}
+  .data-table td.val {{ font-size: 13px; color: #111827; }}
+  .data-table td.val em {{ color: #D1D5DB; font-style: normal; }}
+
+  /* ── footer ── */
+  .footer {{
+    text-align: center; font-size: 12px;
+    color: #9CA3AF; padding: 24px;
+    border-top: 1px solid #E5E7EB; margin-top: 40px;
+  }}
+
+  @media(max-width:600px){{
+    .page-header{{ padding: 24px 20px 20px; }}
+    .stats{{ padding: 16px 20px; }}
+    .content{{ padding: 0 12px 40px; }}
+    .data-table td.key{{ width: 45%; }}
+  }}
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1>{_he(docx_name)}</h1>
+  <div class="meta">Generated {now} &nbsp;·&nbsp; {done_count} of {total_leaves} sections answered</div>
+  <div class="progress-wrap">
+    <div class="progress-bar"></div>
+  </div>
+  <div class="progress-label">{pct}% complete</div>
+</div>
+
+<div class="stats">
+  <div class="stat">
+    <div class="stat-num">{total_leaves}</div>
+    <div class="stat-label">total sections</div>
+  </div>
+  <div class="stat">
+    <div class="stat-num">{done_count}</div>
+    <div class="stat-label">sections answered</div>
+  </div>
+  <div class="stat">
+    <div class="stat-num">{pct}%</div>
+    <div class="stat-label">completion</div>
+  </div>
+</div>
+
+<div class="content">
+  {sections_html if sections_html else '<p style="color:#9CA3AF;padding:24px 0">No answers recorded yet.</p>'}
+</div>
+
+<div class="footer">
+  Survey report &nbsp;·&nbsp; {_he(docx_name)} &nbsp;·&nbsp; {now}
+</div>
+
+</body>
+</html>
+"""
+
+
+def _he(text: str) -> str:
+    """Escape HTML special characters."""
+    return (
+        str(text)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+# =============================================================================
+# GUI — helper widgets
+# =============================================================================
+
+class ScrollableFrame(tk.Frame):
+    """
+    A frame that can scroll vertically.
+    Attach child widgets to .inner_frame.
+    """
+
+    def __init__(self, parent, bg: str = C["bg"], **kwargs):
+        super().__init__(parent, bg=bg, **kwargs)
+
+        self._canvas = tk.Canvas(self, bg=bg, highlightthickness=0)
+        self._scroll = ttk.Scrollbar(
+            self, orient="vertical", command=self._canvas.yview
+        )
+        self.inner_frame = tk.Frame(self._canvas, bg=bg)
+
+        self._canvas.configure(yscrollcommand=self._scroll.set)
+
+        self._scroll.pack(side="right", fill="y")
+        self._canvas.pack(side="left", fill="both", expand=True)
+
+        self._win_id = self._canvas.create_window(
+            (0, 0), window=self.inner_frame, anchor="nw"
+        )
+
+        self.inner_frame.bind("<Configure>", self._on_frame_configure)
+        self._canvas.bind("<Configure>", self._on_canvas_configure)
+        self._canvas.bind_all("<MouseWheel>",  self._on_mousewheel)
+        self._canvas.bind_all("<Button-4>",    self._on_mousewheel)
+        self._canvas.bind_all("<Button-5>",    self._on_mousewheel)
+
+    def _on_frame_configure(self, _event=None):
+        self._canvas.configure(scrollregion=self._canvas.bbox("all"))
+
+    def _on_canvas_configure(self, event):
+        self._canvas.itemconfig(self._win_id, width=event.width)
+
+    def _on_mousewheel(self, event):
+        if event.num == 4:
+            self._canvas.yview_scroll(-1, "units")
+        elif event.num == 5:
+            self._canvas.yview_scroll(1, "units")
+        else:
+            self._canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+    def scroll_to_top(self):
+        self._canvas.yview_moveto(0)
+
+
+def make_button(
+    parent,
+    text: str,
+    command,
+    primary: bool = True,
+    width: int = 0,
+) -> tk.Label:
+    """
+    A flat, styled button implemented as a Label with click binding.
+    Avoids the dated look of tk.Button.
+    """
+    bg = C["accent"] if primary else C["btn_sec_bg"]
+    fg = C["btn_fg"] if primary else C["btn_sec_fg"]
+
+    lbl = tk.Label(
+        parent, text=text, bg=bg, fg=fg,
+        font=FONT_BOLD, cursor="hand2",
+        padx=16, pady=8, relief="flat",
+    )
+    if width:
+        lbl.config(width=width)
+
+    def _enter(_): lbl.config(bg="#4338CA" if primary else "#E5E7EB")
+    def _leave(_): lbl.config(bg=bg)
+    def _click(_): command()
+
+    lbl.bind("<Enter>",   _enter)
+    lbl.bind("<Leave>",   _leave)
+    lbl.bind("<Button-1>", _click)
+    return lbl
+
+
+# =============================================================================
+# GUI — Main application window
+# =============================================================================
+
+class SurveyApp(tk.Tk):
+    """
+    Main application window.
+
+    Layout:
+      ┌──────────────────────────────────────────┐
+      │  Header bar (title + doc name)           │
+      ├──────────────┬───────────────────────────┤
+      │              │                           │
+      │  Sidebar     │   Content area            │
+      │  (nav tree)  │   (changes per section)   │
+      │              │                           │
+      └──────────────┴───────────────────────────┘
+      │  Status bar + progress                   │
+      └──────────────────────────────────────────┘
+    """
+
+    def __init__(self, preload_docx: str | None = None):
+        super().__init__()
+        self.title("Survey Tool")
+        self.geometry("1100x720")
+        self.minsize(800, 560)
+        self.configure(bg=C["bg"])
+
+        # ── Application state ──────────────────────────────────────────────
+        self.root_node:    Node | None = None
+        self.docx_path:    str         = ""
+        self.responses:    dict        = {}   # {breadcrumb: {label: value}}
+        self.all_leaves:   list[Node]  = []   # ordered leaf nodes
+        self._nav_items:   list[dict]  = []   # sidebar item descriptors
+        self._current_id:  str | None  = None # breadcrumb of current section
+
+        # tkinter variables for the active form (rebuilt each section)
+        self._field_vars:  list        = []
+
+        self._build_ui()
+        self._configure_styles()
+
+        if preload_docx:
+            self.after(100, lambda: self._load_docx(preload_docx))
+        else:
+            self.after(100, self._show_welcome)
+
+    # ── UI construction ────────────────────────────────────────────────────
+
+    def _configure_styles(self):
+        """Set up ttk styles used by the progress bar and scrollbar."""
+        style = ttk.Style(self)
+        style.theme_use("clam")
+        style.configure(
+            "Survey.Horizontal.TProgressbar",
+            troughcolor=C["progress_bg"],
+            background=C["progress_fg"],
+            borderwidth=0,
+            thickness=6,
+        )
+        style.configure(
+            "Vertical.TScrollbar",
+            troughcolor=C["sidebar_bg"],
+            background=C["border"],
+        )
+
+    def _build_ui(self):
+        """Assemble all top-level frames and widgets."""
+
+        # ── Header ──────────────────────────────────────────────────────────
+        header = tk.Frame(self, bg=C["accent"], height=54)
+        header.pack(side="top", fill="x")
+        header.pack_propagate(False)
+
+        tk.Label(
+            header, text="Survey Tool", bg=C["accent"], fg="#FFFFFF",
+            font=(FONT_FAMILY, 13, "bold"), padx=20,
+        ).pack(side="left", pady=14)
+
+        self._lbl_docname = tk.Label(
+            header, text="No document loaded",
+            bg=C["accent"], fg="#CAC8F7",
+            font=FONT_SMALL,
+        )
+        # We can't use rgba in tkinter, so use a slightly dimmer white
+        self._lbl_docname.config(fg="#C7D2FE")
+        self._lbl_docname.pack(side="left", pady=14)
+
+        # Open file button in header
+        open_btn = tk.Label(
+            header, text="  Open file  ", bg="#6366F1", fg="#FFFFFF",
+            font=FONT_SMALL, cursor="hand2", padx=4, pady=5,
+        )
+        open_btn.pack(side="right", padx=16, pady=10)
+        open_btn.bind("<Button-1>", lambda _: self._browse_docx())
+        open_btn.bind("<Enter>", lambda _: open_btn.config(bg="#4338CA"))
+        open_btn.bind("<Leave>", lambda _: open_btn.config(bg="#6366F1"))
+
+        # ── Body (sidebar + content) ──────────────────────────────────────
+        body = tk.Frame(self, bg=C["bg"])
+        body.pack(side="top", fill="both", expand=True)
+
+        # Sidebar
+        self._sidebar = tk.Frame(body, bg=C["sidebar_bg"], width=260)
+        self._sidebar.pack(side="left", fill="y")
+        self._sidebar.pack_propagate(False)
+
+        # Thin border between sidebar and content
+        tk.Frame(body, bg=C["border"], width=1).pack(side="left", fill="y")
+
+        # Content area (scrollable)
+        self._content_scroll = ScrollableFrame(body, bg=C["bg"])
+        self._content_scroll.pack(side="left", fill="both", expand=True)
+        self._content = self._content_scroll.inner_frame
+
+        # ── Status bar ────────────────────────────────────────────────────
+        status_bar = tk.Frame(self, bg=C["sidebar_bg"], height=36)
+        status_bar.pack(side="bottom", fill="x")
+        status_bar.pack_propagate(False)
+
+        tk.Frame(status_bar, bg=C["border"], height=1).pack(
+            side="top", fill="x"
+        )
+
+        self._progress_var = tk.DoubleVar(value=0)
+        self._progress_bar = ttk.Progressbar(
+            status_bar,
+            variable=self._progress_var,
+            maximum=100,
+            style="Survey.Horizontal.TProgressbar",
+            length=160,
+        )
+        self._progress_bar.pack(side="left", padx=(16, 8), pady=10)
+
+        self._lbl_status = tk.Label(
+            status_bar, text="Ready",
+            bg=C["sidebar_bg"], fg=C["text_muted"], font=FONT_SMALL,
+        )
+        self._lbl_status.pack(side="left")
+
+        self._lbl_pct = tk.Label(
+            status_bar, text="0%",
+            bg=C["sidebar_bg"], fg=C["accent"], font=FONT_BOLD,
+        )
+        self._lbl_pct.pack(side="right", padx=16)
+
+    # ── Document loading ───────────────────────────────────────────────────
+
+    def _browse_docx(self):
+        path = filedialog.askopenfilename(
+            title="Select a .docx questionnaire",
+            filetypes=[("Word Documents", "*.docx"), ("All files", "*.*")],
+        )
+        if path:
+            self._load_docx(path)
+
+    def _load_docx(self, path: str):
+        """Parse the document and reset the application state."""
+        try:
+            root = parse_document(path)
+        except Exception as exc:
+            messagebox.showerror("Parse error", str(exc))
+            return
+
+        self.root_node   = root
+        self.docx_path   = path
+        self.responses   = {}
+        self.all_leaves  = root.all_leaves()
+        self._current_id = None
+
+        name = os.path.basename(path)
+        self._lbl_docname.config(
+            text=f"  /  {name[:55]}{'…' if len(name) > 55 else ''}"
+        )
+        self._set_status(f"Loaded {len(self.all_leaves)} sections", 0)
+        self._build_sidebar()
+        self._show_home()
+
+    # ── Sidebar ────────────────────────────────────────────────────────────
+
+    def _build_sidebar(self):
+        """Rebuild the navigation tree in the sidebar."""
+        for w in self._sidebar.winfo_children():
+            w.destroy()
+        self._nav_items = []
+
+        # Sidebar top label
+        tk.Label(
+            self._sidebar, text="Sections",
+            bg=C["sidebar_bg"], fg=C["text_muted"],
+            font=FONT_SMALL, anchor="w", padx=16, pady=10,
+        ).pack(fill="x")
+
+        tk.Frame(self._sidebar, bg=C["border"], height=1).pack(fill="x")
+
+        # Scrollable nav list
+        nav_scroll = ScrollableFrame(self._sidebar, bg=C["sidebar_bg"])
+        nav_scroll.pack(fill="both", expand=True)
+        nav_frame = nav_scroll.inner_frame
+
+        # "Home" item
+        self._add_nav_item(
+            nav_frame,
+            node_id="__home__",
+            label="Home",
+            depth=0,
+            is_leaf=False,
+            on_click=self._show_home,
+        )
+
+        # Document sections
+        def add_subtree(node: Node, depth: int):
+            if node.level == 0:
+                for child in node.children:
+                    add_subtree(child, 0)
+                return
+            item_id = node.breadcrumb()
+            self._add_nav_item(
+                nav_frame,
+                node_id=item_id,
+                label=node.title,
+                depth=depth,
+                is_leaf=node.is_leaf(),
+                on_click=(
+                    (lambda nid: lambda: self._navigate_to(nid))(item_id)
+                    if node.is_leaf()
+                    else (lambda n: lambda: self._show_branch(n))(node)
+                ),
+            )
+            for child in node.children:
+                add_subtree(child, depth + 1)
+
+        if self.root_node:
+            add_subtree(self.root_node, 0)
+
+        # Summary item at the bottom
+        tk.Frame(self._sidebar, bg=C["border"], height=1).pack(
+            side="bottom", fill="x"
+        )
+        self._add_nav_item(
+            nav_frame,
+            node_id="__summary__",
+            label="Summary & Save",
+            depth=0,
+            is_leaf=False,
+            on_click=self._show_summary,
+        )
+
+    def _add_nav_item(
+        self,
+        parent,
+        node_id: str,
+        label: str,
+        depth: int,
+        is_leaf: bool,
+        on_click,
+    ):
+        indent = 14 + depth * 14
+        is_done = self._is_section_done(node_id)
+
+        frame = tk.Frame(parent, bg=C["sidebar_bg"], cursor="hand2")
+        frame.pack(fill="x")
+
+        inner = tk.Frame(frame, bg=C["sidebar_bg"])
+        inner.pack(fill="x", padx=(indent, 8), pady=1)
+
+        # Done indicator dot
+        dot_color = C["green"] if is_done else C["border"]
+        dot = tk.Label(
+            inner, text="●", bg=C["sidebar_bg"],
+            fg=dot_color, font=(FONT_FAMILY, 8),
+        )
+        dot.pack(side="left", padx=(0, 6))
+
+        shortened = label if len(label) <= 36 else label[:34] + "…"
+        txt_color = C["accent"] if is_leaf else C["text_primary"]
+
+        lbl = tk.Label(
+            inner, text=shortened, bg=C["sidebar_bg"],
+            fg=txt_color, font=FONT_SMALL if depth > 0 else FONT,
+            anchor="w",
+        )
+        lbl.pack(side="left", fill="x", expand=True, pady=3)
+
+        # Store references for active-state updates
+        item = {
+            "id":    node_id,
+            "frame": frame,
+            "inner": inner,
+            "lbl":   lbl,
+            "dot":   dot,
+        }
+        self._nav_items.append(item)
+
+        def _hover_on(_):
+            if node_id != self._current_id:
+                frame.config(bg=C["accent_lt"])
+                inner.config(bg=C["accent_lt"])
+                lbl.config(bg=C["accent_lt"])
+                dot.config(bg=C["accent_lt"])
+
+        def _hover_off(_):
+            if node_id != self._current_id:
+                bg = C["sidebar_bg"]
+                frame.config(bg=bg); inner.config(bg=bg)
+                lbl.config(bg=bg);   dot.config(bg=bg)
+
+        def _click(_): on_click()
+
+        for w in (frame, inner, dot, lbl):
+            w.bind("<Enter>",    _hover_on)
+            w.bind("<Leave>",    _hover_off)
+            w.bind("<Button-1>", _click)
+
+    def _refresh_nav(self):
+        """Update dot colours and active highlight without full rebuild."""
+        for item in self._nav_items:
+            nid   = item["id"]
+            is_on = (nid == self._current_id)
+            is_done = self._is_section_done(nid)
+
+            bg = C["sidebar_sel"] if is_on else C["sidebar_bg"]
+            dot_c = C["green"] if is_done else (C["accent"] if is_on else C["border"])
+
+            item["frame"].config(bg=bg)
+            item["inner"].config(bg=bg)
+            item["lbl"].config(bg=bg)
+            item["dot"].config(bg=bg, fg=dot_c)
+
+    def _is_section_done(self, section_id: str) -> bool:
+        """Return True if any non-empty answer was recorded for this section."""
+        data = self.responses.get(section_id, {})
+        return any(
+            (isinstance(v, list) and v) or (isinstance(v, str) and v.strip())
+            for v in data.values()
+        )
+
+    # ── Progress ───────────────────────────────────────────────────────────
+
+    def _update_progress(self):
+        total = len(self.all_leaves)
+        done  = sum(1 for n in self.all_leaves if self._is_section_done(n.breadcrumb()))
+        pct   = int(done / total * 100) if total else 0
+        self._progress_var.set(pct)
+        self._lbl_pct.config(text=f"{pct}%")
+
+    def _set_status(self, msg: str, pct: float | None = None):
+        self._lbl_status.config(text=msg)
+        if pct is not None:
+            self._progress_var.set(pct)
+            self._lbl_pct.config(text=f"{int(pct)}%")
+
+    # ── Content area helpers ───────────────────────────────────────────────
+
+    def _clear_content(self):
+        for w in self._content.winfo_children():
+            w.destroy()
+        self._field_vars = []
+        self._content_scroll.scroll_to_top()
+
+    def _pad_frame(self, padx=36, pady=28) -> tk.Frame:
+        """Return a padded container frame inside the content area."""
+        f = tk.Frame(self._content, bg=C["bg"])
+        f.pack(fill="both", expand=True, padx=padx, pady=pady)
+        return f
+
+    def _section_header(self, parent, title: str, breadcrumb: str):
+        tk.Label(
+            parent, text=title, bg=C["bg"],
+            fg=C["text_primary"], font=FONT_TITLE, anchor="w",
+            wraplength=680,
+        ).pack(fill="x", pady=(0, 4))
+        tk.Label(
+            parent, text=breadcrumb, bg=C["bg"],
+            fg=C["text_muted"], font=FONT_SMALL, anchor="w",
+        ).pack(fill="x")
+        tk.Frame(parent, bg=C["border"], height=1).pack(
+            fill="x", pady=(14, 0)
+        )
+
+    # ── Welcome / home screen ──────────────────────────────────────────────
+
+    def _show_welcome(self):
+        """Shown at startup when no document is loaded."""
+        self._clear_content()
+        self._current_id = None
+
+        pad = self._pad_frame()
+
+        tk.Label(
+            pad,
+            text="Welcome to Survey Tool",
+            bg=C["bg"], fg=C["text_primary"], font=FONT_TITLE,
+        ).pack(pady=(40, 12))
+
+        tk.Label(
+            pad,
+            text=(
+                "Load a Word (.docx) questionnaire to begin.\n"
+                "The app will parse its heading structure into a step-by-step survey."
+            ),
+            bg=C["bg"], fg=C["text_muted"], font=FONT,
+            justify="center",
+        ).pack(pady=(0, 28))
+
+        make_button(pad, "  Open .docx file  ", self._browse_docx).pack()
+
+    def _show_home(self):
+        """Home / overview screen after a document is loaded."""
+        self._clear_content()
+        self._current_id = "__home__"
+        self._refresh_nav()
+
+        if not self.root_node:
+            self._show_welcome()
+            return
+
+        pad = self._pad_frame()
+        self._section_header(
+            pad,
+            os.path.basename(self.docx_path),
+            f"{len(self.all_leaves)} sections · click any section to begin",
+        )
+
+        # Grid of top-level section cards
+        grid = tk.Frame(pad, bg=C["bg"])
+        grid.pack(fill="x", pady=(20, 0))
+
+        for col_idx, node in enumerate(self.root_node.children):
+            done_count = sum(
+                1 for leaf in node.all_leaves()
+                if self._is_section_done(leaf.breadcrumb())
+            )
+            total_here = len(node.all_leaves())
+
+            card = tk.Frame(
+                grid, bg=C["card_bg"],
+                relief="flat", bd=1,
+                highlightthickness=1,
+                highlightbackground=C["border"],
+            )
+            card.grid(row=col_idx // 2, column=col_idx % 2,
+                      padx=6, pady=6, sticky="ew")
+            grid.columnconfigure(0, weight=1)
+            grid.columnconfigure(1, weight=1)
+
+            inner = tk.Frame(card, bg=C["card_bg"])
+            inner.pack(fill="x", padx=14, pady=12)
+
+            # Status badge
+            badge_bg = C["green_lt"] if done_count == total_here else C["accent_lt"]
+            badge_fg = "#065F46"    if done_count == total_here else C["accent"]
+            badge_txt = "done" if done_count == total_here else f"{done_count}/{total_here}"
+            tk.Label(
+                inner, text=badge_txt,
+                bg=badge_bg, fg=badge_fg,
+                font=(FONT_FAMILY, 8, "bold"), padx=6, pady=2,
+            ).pack(side="right", anchor="ne")
+
+            # Title (clickable)
+            title_short = node.title if len(node.title) <= 45 else node.title[:43] + "…"
+            title_lbl = tk.Label(
+                inner, text=title_short, bg=C["card_bg"],
+                fg=C["text_primary"], font=FONT_BOLD, anchor="w",
+                wraplength=240, justify="left",
+            )
+            title_lbl.pack(fill="x")
+
+            sub = f"{total_here} leaf sections" if not node.is_leaf() else f"{len(node.fields)} fields"
+            tk.Label(
+                inner, text=sub, bg=C["card_bg"],
+                fg=C["text_muted"], font=FONT_SMALL, anchor="w",
+            ).pack(fill="x", pady=(3, 0))
+
+            # Bind click
+            def _make_click(n):
+                return lambda _: (
+                    self._navigate_to(n.breadcrumb())
+                    if n.is_leaf()
+                    else self._show_branch(n)
+                )
+            for w in (card, inner, title_lbl):
+                w.bind("<Button-1>", _make_click(node))
+                w.config(cursor="hand2")
+
+    # ── Branch (non-leaf) screen ───────────────────────────────────────────
+
+    def _show_branch(self, node: Node):
+        self._clear_content()
+        self._current_id = node.breadcrumb()
+        self._refresh_nav()
+
+        pad = self._pad_frame()
+        self._section_header(pad, node.title, node.breadcrumb())
+
+        for child in node.children:
+            done = all(
+                self._is_section_done(leaf.breadcrumb())
+                for leaf in child.all_leaves()
+            )
+            card = tk.Frame(
+                pad, bg=C["card_bg"],
+                highlightthickness=1,
+                highlightbackground=C["green"] if done else C["border"],
+                cursor="hand2",
+            )
+            card.pack(fill="x", pady=4)
+
+            inner = tk.Frame(card, bg=C["card_bg"])
+            inner.pack(fill="x", padx=14, pady=10)
+
+            if done:
+                tk.Label(
+                    inner, text="done", bg=C["green_lt"], fg="#065F46",
+                    font=(FONT_FAMILY, 8, "bold"), padx=6, pady=2,
+                ).pack(side="right")
+
+            tk.Label(
+                inner, text=child.title, bg=C["card_bg"],
+                fg=C["accent"] if child.is_leaf() else C["text_primary"],
+                font=FONT_BOLD, anchor="w",
+            ).pack(fill="x", side="left")
+
+            def _click(n):
+                return lambda _: (
+                    self._navigate_to(n.breadcrumb())
+                    if n.is_leaf()
+                    else self._show_branch(n)
+                )
+            card.bind("<Button-1>", _click(child))
+            inner.bind("<Button-1>", _click(child))
+
+        # "Fill all" button
+        btn_row = tk.Frame(pad, bg=C["bg"])
+        btn_row.pack(fill="x", pady=(20, 0))
+        leaves_here = node.all_leaves()
+        if leaves_here:
+            make_button(
+                btn_row,
+                "Fill all sub-sections in order",
+                lambda: self._navigate_to(leaves_here[0].breadcrumb()),
+            ).pack(side="left")
+
+    # ── Leaf section form ──────────────────────────────────────────────────
+
+    def _navigate_to(self, section_id: str):
+        """Render the form for the leaf node identified by section_id."""
+        node = self._find_node(section_id)
+        if not node:
+            return
+
+        self._clear_content()
+        self._current_id = section_id
+        self._refresh_nav()
+
+        saved = self.responses.get(section_id, {})
+
+        # Determine prev / next leaves for navigation
+        idx  = next((i for i, n in enumerate(self.all_leaves)
+                     if n.breadcrumb() == section_id), -1)
+        prev_id = self.all_leaves[idx - 1].breadcrumb() if idx > 0 else None
+        next_id = (self.all_leaves[idx + 1].breadcrumb()
+                   if idx < len(self.all_leaves) - 1 else None)
+
+        pad = self._pad_frame()
+        self._section_header(pad, node.title, node.breadcrumb())
+
+        if not node.fields:
+            tk.Label(
+                pad, text="No input fields in this section.",
+                bg=C["bg"], fg=C["text_muted"], font=FONT,
+            ).pack(pady=20)
+        else:
+            self._build_form(pad, node, saved)
+
+        # ── Navigation buttons ─────────────────────────────────────────
+        btn_row = tk.Frame(pad, bg=C["bg"])
+        btn_row.pack(fill="x", pady=(24, 0))
+
+        def _save_and_go(next_dest):
+            self._collect_and_save(section_id, node)
+            if next_dest:
+                self._navigate_to(next_dest)
+            else:
+                self._show_summary()
+
+        make_button(
+            btn_row,
+            "Save & Next →" if next_id else "Save & Summary →",
+            lambda nd=next_id: _save_and_go(nd),
+        ).pack(side="left", padx=(0, 8))
+
+        if prev_id:
+            make_button(
+                btn_row, "← Previous",
+                lambda pid=prev_id: self._navigate_to(pid),
+                primary=False,
+            ).pack(side="left", padx=(0, 8))
+
+        make_button(
+            btn_row, "Home",
+            self._show_home,
+            primary=False,
+        ).pack(side="left")
+
+    def _build_form(self, parent: tk.Frame, node: Node, saved: dict):
+        """
+        Render all FormField widgets for a leaf node.
+        Tk variables are stored in self._field_vars so we can read them
+        back on save.
+        """
+        self._field_vars = []
+
+        for field in node.fields:
+            label_val = saved.get(field.label)
+
+            # ── Section divider ──────────────────────────────────────────
+            tk.Frame(parent, bg=C["divider"], height=1).pack(fill="x", pady=(14, 0))
+
+            # Field label
+            lbl_text = textwrap.shorten(field.label, width=100, placeholder="…")
+            tk.Label(
+                parent, text=lbl_text, bg=C["bg"],
+                fg=C["text_primary"], font=FONT_BOLD,
+                anchor="w", wraplength=680, justify="left",
+            ).pack(fill="x", pady=(10, 5))
+
+            if field.ftype == "checkbox":
+                var_list = self._build_checkbox_field(parent, field, label_val)
+                self._field_vars.append(("checkbox", field.label, var_list))
+            else:
+                text_var = self._build_text_field(parent, field, label_val)
+                self._field_vars.append(("text", field.label, text_var))
+
+    def _build_text_field(
+        self, parent: tk.Frame, field: FormField, saved_val
+    ) -> tk.StringVar:
+        """Render a single-line or multi-line text input and return its StringVar."""
+        var = tk.StringVar(value=saved_val if isinstance(saved_val, str) else "")
+        is_long = len(field.label) > 70 or field.ftype == "table_row"
+
+        if is_long:
+            frame = tk.Frame(parent, bg=C["card_bg"],
+                             highlightthickness=1, highlightbackground=C["border"])
+            frame.pack(fill="x", pady=(0, 4))
+            txt = tk.Text(
+                frame, height=2, font=FONT,
+                bg=C["card_bg"], fg=C["text_primary"],
+                relief="flat", padx=8, pady=6, wrap="word",
+                insertbackground=C["accent"],
+            )
+            txt.pack(fill="x")
+            if saved_val:
+                txt.insert("1.0", saved_val)
+
+            def _get_text():
+                return txt.get("1.0", "end-1c")
+
+            # Wrap in a fake StringVar-like object
+            class _TextProxy:
+                def get(self_inner): return _get_text()
+            return _TextProxy()
+
+        else:
+            entry_frame = tk.Frame(
+                parent, bg=C["card_bg"],
+                highlightthickness=1, highlightbackground=C["border"],
+            )
+            entry_frame.pack(fill="x", pady=(0, 4))
+            entry = tk.Entry(
+                entry_frame, textvariable=var, font=FONT,
+                bg=C["card_bg"], fg=C["text_primary"],
+                relief="flat", bd=0,
+                insertbackground=C["accent"],
+            )
+            entry.pack(fill="x", ipady=7, padx=8)
+
+            # Focus highlight
+            def _focus_in(_): entry_frame.config(highlightbackground=C["accent"])
+            def _focus_out(_): entry_frame.config(highlightbackground=C["border"])
+            entry.bind("<FocusIn>",  _focus_in)
+            entry.bind("<FocusOut>", _focus_out)
+            return var
+
+    def _build_checkbox_field(
+        self, parent: tk.Frame, field: FormField, saved_val
+    ) -> list[tuple[str, tk.BooleanVar]]:
+        """
+        Render pill-style checkboxes for a multi-select field.
+        Returns list of (option_label, BooleanVar) pairs.
+        """
+        selected_set = set(saved_val) if isinstance(saved_val, list) else set()
+        var_pairs: list[tuple[str, tk.BooleanVar]] = []
+
+        for opt in field.options:
+            var = tk.BooleanVar(value=(opt in selected_set))
+
+            pill = tk.Frame(
+                parent, bg=C["check_on_bg"] if var.get() else C["card_bg"],
+                highlightthickness=1,
+                highlightbackground=C["check_on"] if var.get() else C["border"],
+                cursor="hand2",
+            )
+            pill.pack(fill="x", pady=2)
+
+            inner = tk.Frame(pill, bg=pill.cget("bg"))
+            inner.pack(fill="x", padx=10, pady=6)
+
+            # Custom checkbox square
+            box_lbl = tk.Label(
+                inner,
+                text="■" if var.get() else "□",
+                bg=inner.cget("bg"),
+                fg=C["accent"] if var.get() else C["text_muted"],
+                font=(FONT_FAMILY, 10),
+            )
+            box_lbl.pack(side="left", padx=(0, 8))
+
+            opt_lbl = tk.Label(
+                inner, text=opt, bg=inner.cget("bg"),
+                fg=C["accent"] if var.get() else C["text_primary"],
+                font=FONT, anchor="w", wraplength=580, justify="left",
+            )
+            opt_lbl.pack(side="left", fill="x", expand=True)
+
+            # Toggle behaviour
+            def _toggle(v=var, p=pill, il=inner, bl=box_lbl, ol=opt_lbl):
+                v.set(not v.get())
+                on = v.get()
+                bg_ = C["check_on_bg"] if on else C["card_bg"]
+                bo_ = C["check_on"]    if on else C["border"]
+                tx_ = C["accent"]      if on else C["text_primary"]
+                p.config(bg=bg_,  highlightbackground=bo_)
+                il.config(bg=bg_)
+                bl.config(bg=bg_, fg=C["accent"] if on else C["text_muted"],
+                          text="■" if on else "□")
+                ol.config(bg=bg_, fg=tx_)
+
+            for w in (pill, inner, box_lbl, opt_lbl):
+                w.bind("<Button-1>", lambda _, t=_toggle: t())
+
+            var_pairs.append((opt, var))
+
+        return var_pairs
+
+    # ── Save logic ─────────────────────────────────────────────────────────
+
+    def _collect_and_save(self, section_id: str, node: Node):
+        """Read all current form widget values and store in self.responses."""
+        data: dict[str, object] = {}
+        for entry in self._field_vars:
+            kind, label, payload = entry
+            if kind == "checkbox":
+                data[label] = [opt for opt, var in payload if var.get()]
+            else:
+                data[label] = payload.get()
+
+        self.responses[section_id] = data
+        self._update_progress()
+        self._refresh_nav()
+
+    # ── Summary & export ───────────────────────────────────────────────────
+
+    def _show_summary(self):
+        """Render the summary screen with totals and the Save HTML button."""
+        self._clear_content()
+        self._current_id = "__summary__"
+        self._refresh_nav()
+
+        pad = self._pad_frame()
+
+        tk.Label(
+            pad, text="Summary & Save",
+            bg=C["bg"], fg=C["text_primary"], font=FONT_TITLE,
+        ).pack(anchor="w")
+
+        total   = len(self.all_leaves)
+        done    = sum(1 for n in self.all_leaves
+                      if self._is_section_done(n.breadcrumb()))
+        pct     = int(done / total * 100) if total else 0
+
+        # Stats row
+        stats = tk.Frame(pad, bg=C["bg"])
+        stats.pack(fill="x", pady=(18, 20))
+        for label, value in [
+            ("Total sections", str(total)),
+            ("Answered",        str(done)),
+            ("Completion",      f"{pct}%"),
+        ]:
+            card = tk.Frame(
+                stats, bg=C["card_bg"],
+                highlightthickness=1, highlightbackground=C["border"],
+            )
+            card.pack(side="left", padx=(0, 12), ipadx=16, ipady=10)
+            tk.Label(card, text=value, bg=C["card_bg"],
+                     fg=C["accent"], font=(FONT_FAMILY, 22, "bold")).pack()
+            tk.Label(card, text=label, bg=C["card_bg"],
+                     fg=C["text_muted"], font=FONT_SMALL).pack()
+
+        # Progress bar (visual only — reflects the actual progress)
+        pb_frame = tk.Frame(pad, bg=C["bg"])
+        pb_frame.pack(fill="x", pady=(0, 20))
+        ttk.Progressbar(
+            pb_frame, value=pct, maximum=100, length=400,
+            style="Survey.Horizontal.TProgressbar",
+        ).pack(side="left")
+        tk.Label(
+            pb_frame, text=f"  {pct}% complete",
+            bg=C["bg"], fg=C["accent"], font=FONT_BOLD,
+        ).pack(side="left")
+
+        tk.Frame(pad, bg=C["border"], height=1).pack(fill="x", pady=(0, 16))
+
+        # Section-by-section preview
+        if self.responses:
+            for section_id, fields in self.responses.items():
+                self._summary_card(pad, section_id, fields)
+        else:
+            tk.Label(
+                pad, text="No answers recorded yet.",
+                bg=C["bg"], fg=C["text_muted"], font=FONT,
+            ).pack(pady=20)
+
+        # Save button
+        tk.Frame(pad, bg=C["border"], height=1).pack(fill="x", pady=(20, 0))
+        save_row = tk.Frame(pad, bg=C["bg"])
+        save_row.pack(fill="x", pady=(16, 0))
+
+        make_button(
+            save_row, "  Save as HTML  ", self._save_html
+        ).pack(side="left", padx=(0, 12))
+
+        make_button(
+            save_row, "  Save as JSON  ", self._save_json,
+            primary=False,
+        ).pack(side="left")
+
+    def _summary_card(self, parent: tk.Frame, section_id: str, fields: dict):
+        """Render one collapsed section card in the summary view."""
+        card = tk.Frame(
+            parent, bg=C["card_bg"],
+            highlightthickness=1, highlightbackground=C["border"],
+        )
+        card.pack(fill="x", pady=4)
+
+        header = tk.Frame(card, bg=C["card_bg"])
+        header.pack(fill="x", padx=14, pady=8)
+
+        answered = sum(
+            1 for v in fields.values()
+            if (isinstance(v, list) and v) or (isinstance(v, str) and v.strip())
+        )
+        done = answered == len(fields)
+        badge_bg = C["green_lt"] if done else C["accent_lt"]
+        badge_fg = "#065F46"    if done else C["accent"]
+        tk.Label(
+            header, text=f"{answered}/{len(fields)}",
+            bg=badge_bg, fg=badge_fg,
+            font=(FONT_FAMILY, 8, "bold"), padx=6, pady=2,
+        ).pack(side="right")
+
+        short = section_id if len(section_id) <= 70 else section_id[:68] + "…"
+        tk.Label(
+            header, text=short, bg=C["card_bg"],
+            fg=C["text_primary"], font=FONT_BOLD, anchor="w",
+        ).pack(side="left", fill="x")
+
+        # Show first few answers as a preview
+        preview_count = 0
+        for label, value in fields.items():
+            if preview_count >= 3:
+                break
+            if isinstance(value, list):
+                display = ", ".join(value) if value else "—"
+            else:
+                display = value.strip() if value else "—"
+            if not display or display == "—":
+                continue
+
+            row = tk.Frame(card, bg=C["card_bg"])
+            row.pack(fill="x", padx=14, pady=(0, 3))
+            tk.Label(
+                row,
+                text=(label[:40] + "…" if len(label) > 40 else label) + ":",
+                bg=C["card_bg"], fg=C["text_muted"], font=FONT_SMALL, anchor="w",
+            ).pack(side="left")
+            tk.Label(
+                row,
+                text=display[:60] + ("…" if len(display) > 60 else ""),
+                bg=C["card_bg"], fg=C["text_primary"], font=FONT_SMALL, anchor="w",
+            ).pack(side="left", padx=(4, 0))
+            preview_count += 1
+
+        if preview_count < answered:
+            tk.Label(
+                card, text=f"  … and {answered - preview_count} more",
+                bg=C["card_bg"], fg=C["text_muted"], font=FONT_SMALL, anchor="w",
+            ).pack(padx=14, pady=(0, 6))
+        else:
+            tk.Frame(card, bg=C["bg"], height=4).pack()
+
+    # ── File export ────────────────────────────────────────────────────────
+
+    def _save_html(self):
+        """Write HTML report to a user-chosen path and show a success dialog."""
+        if not self.responses:
+            messagebox.showwarning(
+                "No data", "Please fill in at least one section before saving."
+            )
+            return
+
+        default_name = (
+            Path(self.docx_path).stem + "_survey_results.html"
+            if self.docx_path
+            else "survey_results.html"
+        )
+        path = filedialog.asksaveasfilename(
+            title="Save HTML report",
+            defaultextension=".html",
+            initialfile=default_name,
+            filetypes=[("HTML files", "*.html"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+
+        docx_name = os.path.basename(self.docx_path) if self.docx_path else "Survey"
+        html = build_html_report(
+            docx_name=docx_name,
+            responses=self.responses,
+            total_leaves=len(self.all_leaves),
+        )
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(html)
+
+        abs_path = os.path.abspath(path)
+        messagebox.showinfo(
+            "Saved",
+            f"HTML report saved successfully.\n\nPath:\n{abs_path}",
+        )
+        self._set_status(f"Saved: {abs_path}")
+
+    def _save_json(self):
+        """Write raw JSON responses to a user-chosen path."""
+        if not self.responses:
+            messagebox.showwarning("No data", "No answers to export yet.")
+            return
+
+        default_name = (
+            Path(self.docx_path).stem + "_survey_results.json"
+            if self.docx_path
+            else "survey_results.json"
+        )
+        path = filedialog.asksaveasfilename(
+            title="Save JSON",
+            defaultextension=".json",
+            initialfile=default_name,
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+
+        payload = {
+            "generated_at": datetime.now().isoformat(),
+            "source_docx":  os.path.basename(self.docx_path),
+            "responses":    self.responses,
+        }
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=2, ensure_ascii=False)
+
+        abs_path = os.path.abspath(path)
+        messagebox.showinfo(
+            "Saved",
+            f"JSON saved successfully.\n\nPath:\n{abs_path}",
+        )
+        self._set_status(f"Saved: {abs_path}")
+
+    # ── Utility ────────────────────────────────────────────────────────────
+
+    def _find_node(self, section_id: str) -> Node | None:
+        """Locate a Node by its breadcrumb string."""
+        def _search(node: Node) -> Node | None:
+            if node.breadcrumb() == section_id:
+                return node
+            for child in node.children:
+                found = _search(child)
+                if found:
+                    return found
+            return None
+        return _search(self.root_node) if self.root_node else None
+
+
+# =============================================================================
+# Entry point
+# =============================================================================
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Desktop survey tool — loads a .docx and presents a GUI form."
+    )
+    parser.add_argument(
+        "--docx", default=None,
+        help="Path to a .docx file to load on startup"
+    )
+    args = parser.parse_args()
+
+    # Auto-detect a .docx in the current directory if none specified
+    preload = args.docx
+    if not preload:
+        candidates = sorted(Path(".").glob("*.docx"))
+        if candidates:
+            preload = str(candidates[0])
+
+    app = SurveyApp(preload_docx=preload)
+    app.mainloop()
+
+
+if __name__ == "__main__":
+    main()
