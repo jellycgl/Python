@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -405,6 +406,114 @@ def _he(text: str) -> str:
 # GUI — helper widgets
 # =============================================================================
 
+# ── Gradient-button paint helpers ────────────────────────────────────────────
+
+def _lerp_color(c1: str, c2: str, t: float) -> str:
+    """Linearly interpolate between two #rrggbb hex colours (t in 0..1)."""
+    r1, g1, b1 = int(c1[1:3], 16), int(c1[3:5], 16), int(c1[5:7], 16)
+    r2, g2, b2 = int(c2[1:3], 16), int(c2[3:5], 16), int(c2[5:7], 16)
+    return (f"#{int(r1 + (r2-r1)*t):02x}"
+            f"{int(g1 + (g2-g1)*t):02x}"
+            f"{int(b1 + (b2-b1)*t):02x}")
+
+
+# Visual state tokens → colour recipe
+_NAV_STATES: dict[str, dict] = {
+    "off": dict(
+        c_top="#FFFFFF", c_bot="#F0F2FF",
+        border="#D1D5DB",
+        text="#374151",
+        badge_bg="#E5E7EB", badge_fg="#6B7280",
+    ),
+    "hover": dict(
+        c_top="#EEF2FF", c_bot="#DDE4FF",
+        border="#6366F1",
+        text="#4338CA",
+        badge_bg="#C7D2FE", badge_fg="#4338CA",
+    ),
+    "on": dict(
+        c_top="#818CF8", c_bot="#4338CA",
+        border="#4338CA",
+        text="#FFFFFF",
+        badge_bg="#4338CA", badge_fg="#FFFFFF",
+    ),
+}
+
+
+def _paint_nav_canvas(
+    canvas: "tk.Canvas",
+    label: str,
+    badge_text: str,
+    badge_done: bool,
+    state: str,
+) -> None:
+    """Repaint a Canvas-based nav button.  state ∈ {'off', 'hover', 'on'}."""
+    canvas.delete("all")
+    W = canvas.winfo_width()
+    H = canvas.winfo_height()
+    if W < 8 or H < 8:
+        return
+
+    s  = _NAV_STATES[state]
+    r  = 10   # corner radius (px)
+
+    # ── gradient background clipped to rounded rect ──────────────────────
+    for y in range(H):
+        t     = y / max(H - 1, 1)
+        color = _lerp_color(s["c_top"], s["c_bot"], t)
+        xc    = 0
+        if y < r:
+            dy = r - y
+            xc = r - int(math.sqrt(max(0.0, r * r - dy * dy)))
+        elif y >= H - r:
+            dy = r - (H - 1 - y)
+            xc = r - int(math.sqrt(max(0.0, r * r - dy * dy)))
+        x1, x2 = xc, W - xc
+        if x2 > x1:
+            canvas.create_line(x1, y, x2, y, fill=color)
+
+    # ── top-edge shine on active button ──────────────────────────────────
+    if state == "on":
+        shine = _lerp_color(s["c_top"], "#FFFFFF", 0.35)
+        canvas.create_line(r, 1, W - r, 1, fill=shine, width=1)
+
+    # ── rounded outline (smooth polygon) ─────────────────────────────────
+    pts = [r,0,  W-r,0,  W,0,  W,r,
+           W,H-r, W,H,   W-r,H, r,H,
+           0,H,   0,H-r,  0,r,  0,0]
+    canvas.create_polygon(pts, smooth=True, fill="", outline=s["border"], width=1)
+
+    # ── badge ─────────────────────────────────────────────────────────────
+    text_right = W - 10
+    if badge_text:
+        if badge_done:
+            bbg, bfg = C["green"], "#FFFFFF"
+        else:
+            bbg, bfg = s["badge_bg"], s["badge_fg"]
+        bpad = 6
+        bh   = 16
+        bw   = max(len(badge_text) * 6 + bpad * 2, 24)
+        bx2  = W - 10
+        bx1  = bx2 - bw
+        by1  = (H - bh) // 2
+        by2  = by1 + bh
+        br   = bh // 2
+        bpts = [bx1+br,by1, bx2-br,by1, bx2,by1, bx2,by1+br,
+                bx2,by2-br, bx2,by2,    bx2-br,by2, bx1+br,by2,
+                bx1,by2,    bx1,by2-br, bx1,by1+br, bx1,by1]
+        canvas.create_polygon(bpts, smooth=True, fill=bbg, outline="")
+        canvas.create_text((bx1+bx2)//2, H//2,
+                           text=badge_text, fill=bfg,
+                           font=(FONT_FAMILY, 8, "bold"))
+        text_right = bx1 - 8
+
+    # ── label text ────────────────────────────────────────────────────────
+    avail = max(text_right - 16, 10)
+    canvas.create_text(14, H // 2,
+                       text=label, fill=s["text"],
+                       font=FONT, anchor="w", width=avail)
+
+
 class ScrollableFrame(tk.Frame):
     """
     A frame that can scroll vertically.
@@ -522,6 +631,7 @@ class SurveyApp(tk.Tk):
         self.geometry("1100x720")
         self.minsize(800, 560)
         self.configure(bg=C["bg"])
+        self.state("zoomed")   # start maximised (Windows; ignored on other OS)
 
         # ── Application state ──────────────────────────────────────────────
         self.root_node:    Node | None = None
@@ -569,19 +679,19 @@ class SurveyApp(tk.Tk):
         header.pack(side="top", fill="x")
         header.pack_propagate(False)
 
-        tk.Label(
-            header, text="Survey Tool", bg=C["accent"], fg="#FFFFFF",
-            font=(FONT_FAMILY, 13, "bold"), padx=20,
-        ).pack(side="left", pady=14)
-
-        self._lbl_docname = tk.Label(
-            header, text="No document loaded",
-            bg=C["accent"], fg="#CAC8F7",
-            font=FONT_SMALL,
+        _title_lbl = tk.Label(
+            header, text="Third-Party System Data Collection",
+            bg=C["accent"], fg="#FFFFFF",
+            font=(FONT_FAMILY, 13, "bold"), padx=20, anchor="w", justify="left",
         )
-        # We can't use rgba in tkinter, so use a slightly dimmer white
-        self._lbl_docname.config(fg="#C7D2FE")
-        self._lbl_docname.pack(side="left", pady=14)
+        _title_lbl.pack(side="left", pady=10, fill="x", expand=True)
+
+        def _update_title_wrap(_=None):
+            avail = header.winfo_width() - 160  # leave room for the Open button
+            if avail > 50:
+                _title_lbl.config(wraplength=avail)
+
+        header.bind("<Configure>", _update_title_wrap)
 
         # Open file button in header
         open_btn = tk.Label(
@@ -598,7 +708,7 @@ class SurveyApp(tk.Tk):
         body.pack(side="top", fill="both", expand=True)
 
         # Sidebar
-        self._sidebar = tk.Frame(body, bg=C["sidebar_bg"], width=260)
+        self._sidebar = tk.Frame(body, bg=C["sidebar_bg"], width=320)
         self._sidebar.pack(side="left", fill="y")
         self._sidebar.pack_propagate(False)
 
@@ -665,10 +775,7 @@ class SurveyApp(tk.Tk):
         self.all_leaves  = root.all_leaves()
         self._current_id = None
 
-        name = os.path.basename(path)
-        self._lbl_docname.config(
-            text=f"  /  {name[:55]}{'…' if len(name) > 55 else ''}"
-        )
+        # filename no longer shown in the header
         self._set_status(f"Loaded {len(self.all_leaves)} sections", 0)
         self._build_sidebar()
         self._show_home()
@@ -716,6 +823,18 @@ class SurveyApp(tk.Tk):
             nav_frame, "__summary__", "Summary & Save", self._show_summary
         )
 
+    def _get_badge(self, node: "Node | None") -> tuple[str, bool]:
+        """Return (badge_text, all_done) for a chapter node."""
+        if not node:
+            return "", False
+        leaves = node.all_leaves()
+        total  = len(leaves)
+        if total == 0:
+            return "", False
+        done     = sum(1 for lf in leaves if self._is_section_done(lf.breadcrumb()))
+        all_done = done == total
+        return ("✓" if all_done else f"{done}/{total}"), all_done
+
     def _add_nav_btn(
         self,
         parent,
@@ -724,90 +843,53 @@ class SurveyApp(tk.Tk):
         on_click,
         node: "Node | None" = None,
     ):
-        """Add a full-width bordered button to the sidebar navigation."""
+        """Add a full-width gradient rounded-rect button to the sidebar."""
         is_on = (node_id == self._current_id)
-        bg     = C["accent"] if is_on else C["sidebar_bg"]
-        fg     = "#FFFFFF"   if is_on else C["text_primary"]
-        border = C["accent"] if is_on else C["border"]
 
-        # Outer wrapper — fills sidebar width with small vertical gap only
-        outer = tk.Frame(parent, bg=C["sidebar_bg"])
-        outer.pack(fill="x", padx=8, pady=3)
-
-        # Bordered button frame
-        btn_frame = tk.Frame(
-            outer, bg=bg, cursor="hand2",
-            highlightthickness=1, highlightbackground=border,
-        )
-        btn_frame.pack(fill="x")
-
-        row = tk.Frame(btn_frame, bg=bg)
-        row.pack(fill="x", padx=12, pady=10)
-
-        lbl = tk.Label(
-            row, text=label, bg=bg, fg=fg, font=FONT,
-            anchor="w", wraplength=160, justify="left",
-        )
-        lbl.pack(side="left", fill="x", expand=True)
-
-        # Progress badge for chapter nodes with children
-        badge_lbl = None
-        if node:
-            leaves = node.all_leaves()
-            total = len(leaves)
-            if total > 0:
-                done_count = sum(
-                    1 for lf in leaves if self._is_section_done(lf.breadcrumb())
-                )
-                all_done = done_count == total
-                badge_bg = C["green"]   if all_done else ("#6366F1" if is_on else C["border"])
-                badge_fg = "#FFFFFF"    if (all_done or is_on) else C["text_muted"]
-                badge_lbl = tk.Label(
-                    row, text=f"{done_count}/{total}",
-                    bg=badge_bg, fg=badge_fg,
-                    font=(FONT_FAMILY, 8, "bold"), padx=5, pady=1,
-                )
-                badge_lbl.pack(side="right")
-
-        item = {
-            "id":     node_id,
-            "frame":  btn_frame,
-            "outer":  outer,
-            "row":    row,
-            "lbl":    lbl,
-            "badge":  badge_lbl,
-            "node":   node,
+        # Item dict created first so the <Configure> closure can reference it
+        item: dict = {
+            "id":    node_id,
+            "label": label,
+            "node":  node,
+            "state": "on" if is_on else "off",
+            "canvas": None,
         }
         self._nav_items.append(item)
 
-        all_widgets = [btn_frame, row, lbl]
-        if badge_lbl:
-            all_widgets.append(badge_lbl)
+        outer = tk.Frame(parent, bg=C["sidebar_bg"])
+        outer.pack(fill="x", padx=8, pady=3)
+
+        canvas = tk.Canvas(
+            outer, height=50, bg=C["sidebar_bg"],
+            highlightthickness=0, cursor="hand2",
+        )
+        canvas.pack(fill="x")
+        item["canvas"] = canvas
+
+        def _repaint(_=None):
+            btxt, bdone = self._get_badge(item["node"])
+            _paint_nav_canvas(canvas, item["label"], btxt, bdone, item["state"])
+
+        # Repaint on resize (also fires on first layout)
+        canvas.bind("<Configure>", _repaint)
+        # Backup in case <Configure> fires before geometry is resolved
+        canvas.after(30, _repaint)
 
         def _hover_on(_):
-            if node_id != self._current_id and not self._is_ancestor_active(node_id):
-                btn_frame.config(bg=C["accent_lt"], highlightbackground=C["accent"])
-                for w in (row, lbl):
-                    w.config(bg=C["accent_lt"])
-                lbl.config(fg=C["accent"])
-                if badge_lbl:
-                    badge_lbl.config(bg=C["accent_lt"])
+            if item["state"] != "on":
+                btxt, bdone = self._get_badge(node)
+                _paint_nav_canvas(canvas, label, btxt, bdone, "hover")
 
         def _hover_off(_):
-            if node_id != self._current_id and not self._is_ancestor_active(node_id):
-                btn_frame.config(bg=C["sidebar_bg"], highlightbackground=C["border"])
-                for w in (row, lbl):
-                    w.config(bg=C["sidebar_bg"])
-                lbl.config(fg=C["text_primary"])
-                if badge_lbl:
-                    badge_lbl.config(bg=C["border"])
+            if item["state"] != "on":
+                btxt, bdone = self._get_badge(node)
+                _paint_nav_canvas(canvas, label, btxt, bdone, item["state"])
 
         def _click(_): on_click()
 
-        for w in all_widgets:
-            w.bind("<Enter>",    _hover_on)
-            w.bind("<Leave>",    _hover_off)
-            w.bind("<Button-1>", _click)
+        canvas.bind("<Enter>",    _hover_on)
+        canvas.bind("<Leave>",    _hover_off)
+        canvas.bind("<Button-1>", _click)
 
     def _is_ancestor_active(self, node_id: str) -> bool:
         """True if the current view is a descendant of this sidebar button."""
@@ -816,36 +898,15 @@ class SurveyApp(tk.Tk):
         return self._current_id.startswith(node_id + " > ")
 
     def _refresh_nav(self):
-        """Update button colours/highlights in the sidebar without full rebuild."""
+        """Update gradient button states in the sidebar without full rebuild."""
         for item in self._nav_items:
             nid   = item["id"]
             is_on = (nid == self._current_id) or self._is_ancestor_active(nid)
-
-            bg     = C["accent"] if is_on else C["sidebar_bg"]
-            fg     = "#FFFFFF"   if is_on else C["text_primary"]
-            border = C["accent"] if is_on else C["border"]
-
-            item["frame"].config(bg=bg, highlightbackground=border)
-            item["row"].config(bg=bg)
-            item["lbl"].config(bg=bg, fg=fg)
-
-            # Update progress badge colours
-            badge = item.get("badge")
-            if badge:
-                node = item.get("node")
-                if node:
-                    leaves = node.all_leaves()
-                    done_count = sum(
-                        1 for lf in leaves
-                        if self._is_section_done(lf.breadcrumb())
-                    )
-                    all_done = done_count == len(leaves)
-                    badge_bg = C["green"] if all_done else ("#6366F1" if is_on else C["border"])
-                    badge_fg = "#FFFFFF" if (all_done or is_on) else C["text_muted"]
-                    badge.config(
-                        bg=badge_bg, fg=badge_fg,
-                        text=f"{done_count}/{len(leaves)}",
-                    )
+            item["state"] = "on" if is_on else "off"
+            canvas = item.get("canvas")
+            if canvas:
+                btxt, bdone = self._get_badge(item["node"])
+                _paint_nav_canvas(canvas, item["label"], btxt, bdone, item["state"])
 
     def _is_section_done(self, section_id: str) -> bool:
         """Return True if any non-empty answer was recorded for this section."""
@@ -909,7 +970,7 @@ class SurveyApp(tk.Tk):
 
         tk.Label(
             pad,
-            text="Welcome to Survey Tool",
+            text="Welcome to Third-Party System Data Collection",
             bg=C["bg"], fg=C["text_primary"], font=FONT_TITLE,
         ).pack(pady=(40, 12))
 
