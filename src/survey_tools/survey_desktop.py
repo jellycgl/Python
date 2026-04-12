@@ -138,12 +138,22 @@ class Node:
 
 
 class FormField:
-    """One answerable item (text input or multi-select checkboxes)."""
+    """One answerable item (text input, multi-select checkboxes, or API table)."""
 
-    def __init__(self, ftype: str, label: str, options: list[str] | None = None):
-        self.ftype   = ftype          # "text" | "checkbox" | "table_row"
+    def __init__(
+        self,
+        ftype: str,
+        label: str,
+        options: list[str] | None = None,
+        rows: list[str] | None = None,
+        hints: dict | None = None,
+    ):
+        self.ftype   = ftype   # "text" | "checkbox" | "table_row" | "api_table"
         self.label   = label
-        self.options = options or []
+        self.options = options or []   # checkbox options OR api_table column names
+        self.rows    = rows    or []   # api_table row labels
+        self.hints   = hints   or {}   # api_table pre-filled cell text used as placeholders
+                                       # {row_label: {col_name: original_cell_text}}
 
 
 def _extract_checkboxes(text: str) -> list[str]:
@@ -172,7 +182,9 @@ def parse_document(docx_path: str) -> Node:
             para  = DocxPara(block, doc)
             sname = para.style.name if para.style else ""
             level = HEADING_STYLES.get(sname, 0)
-            raw   = "".join(r.text for r in para.runs).strip()
+            raw = "".join(r.text for r in para.runs)
+            # Strip invisible characters (NBSP, zero-width, BOM, …) then whitespace
+            raw = re.sub(r'[\u00a0\u200b\u200c\u200d\ufeff\u2028\u2029]+', ' ', raw).strip()
             if not raw:
                 continue
 
@@ -193,26 +205,90 @@ def parse_document(docx_path: str) -> Node:
                             FormField("checkbox", "Select all that apply", cbs)
                         )
                 elif len(raw) > 5 and not raw.startswith("*Note*"):
-                    parent.fields.append(FormField("text", raw[:120]))
+                    parent.fields.append(FormField("text", raw))
 
         elif tag == "tbl":
             tbl    = DocxTable(block, doc)
             parent = cur()
-            for i, row in enumerate(tbl.rows):
-                cells = [c.text.strip() for c in row.cells]
-                if not any(cells):
+            n_cols = len(tbl.columns)
+
+            def _fallback_rows(rows_cells: list[list[str]], skip_first: bool) -> None:
+                """Original row-by-row field creation used as a fall-back."""
+                for i, cells in enumerate(rows_cells):
+                    if not any(cells):
+                        continue
+                    if i == 0 and skip_first:
+                        continue
+                    label = cells[0] if cells[0] else f"Row {i+1}"
+                    if len(label) < 3:
+                        continue
+                    second = cells[1] if len(cells) > 1 else ""
+                    cbs = _extract_checkboxes(second)
+                    if cbs:
+                        parent.fields.append(FormField("checkbox", label, cbs))
+                    else:
+                        parent.fields.append(FormField("table_row", label))
+
+            if n_cols >= 3:
+                # ── Structured multi-column table (e.g. API endpoints) ────
+                all_rows = [
+                    [c.text.strip() for c in row.cells]
+                    for row in tbl.rows
+                ]
+                if not all_rows:
                     continue
-                if i == 0 and all(c == c.upper() or not c for c in cells):
-                    continue
-                label  = cells[0] if cells[0] else f"Row {i+1}"
-                if len(label) < 3:
-                    continue
-                second = cells[1] if len(cells) > 1 else ""
-                cbs    = _extract_checkboxes(second)
-                if cbs:
-                    parent.fields.append(FormField("checkbox", label, cbs))
+
+                hdr = all_rows[0]
+                # Treat the first row as a column-header when EITHER:
+                #   a) every cell is ALL-CAPS or empty (e.g. "API METHOD")
+                #   b) the first (row-label) cell is blank but the rest have
+                #      content (pivot-table style, e.g. "Applies to Your System?")
+                all_caps         = all(c == c.upper() or not c for c in hdr)
+                pivot_style      = (not hdr[0]) and any(c for c in hdr[1:])
+                is_hdr           = all_caps or pivot_style
+
+                # Always read column names from the first row so they are never
+                # replaced with generic "Col N" labels.
+                col_names = [c for c in hdr[1:] if c] or \
+                            [f"Col {i+1}" for i in range(n_cols - 1)]
+                data_rows = all_rows[1:] if is_hdr else all_rows
+
+                row_labels = [
+                    r[0].strip() for r in data_rows
+                    if r and r[0].strip() and len(r[0].strip()) >= 2
+                ]
+
+                if row_labels:
+                    # Collect pre-existing cell text as placeholder hints
+                    hints: dict = {}
+                    for r in data_rows:
+                        rl = r[0].strip() if r else ""
+                        if rl not in row_labels:
+                            continue
+                        row_hints: dict = {}
+                        for ci, cn in enumerate(col_names):
+                            cell_text = r[ci + 1].strip() if ci + 1 < len(r) else ""
+                            if cell_text:
+                                row_hints[cn] = cell_text
+                        if row_hints:
+                            hints[rl] = row_hints
+                    parent.fields.append(
+                        FormField("api_table", "|".join(row_labels),
+                                  options=col_names, rows=row_labels, hints=hints)
+                    )
                 else:
-                    parent.fields.append(FormField("table_row", label))
+                    # Can't build a labelled table → fall back to row-by-row
+                    _fallback_rows(all_rows, skip_first=is_hdr)
+            else:
+                # ── Original 1-2 column table handling ────────────────────
+                all_rows = [
+                    [c.text.strip() for c in row.cells]
+                    for row in tbl.rows
+                ]
+                is_hdr = bool(all_rows) and all(
+                    c == c.upper() or not c for c in all_rows[0]
+                )
+                _fallback_rows(all_rows, skip_first=is_hdr)
 
     return root
 
@@ -230,20 +306,57 @@ def build_html_report(
     Generate a self-contained, styled HTML report from all collected answers.
     Returns the full HTML string.
     """
-    done_count = sum(
-        1 for fields in responses.values()
-        if any(
-            (isinstance(v, list) and v) or (isinstance(v, str) and v.strip())
-            for v in fields.values()
-        )
-    )
+    def _has_any(fields: dict) -> bool:
+        for v in fields.values():
+            if isinstance(v, list) and v:
+                return True
+            if isinstance(v, str) and v.strip():
+                return True
+            if isinstance(v, dict):
+                for rv in v.values():
+                    if isinstance(rv, dict) and any(
+                        cv.strip() for cv in rv.values() if isinstance(cv, str)
+                    ):
+                        return True
+        return False
+
+    done_count = sum(1 for fields in responses.values() if _has_any(fields))
     pct = int(done_count / total_leaves * 100) if total_leaves else 0
+
+    def _api_table_html(tbl_data: dict) -> str:
+        """Render a {row_label: {col: value}} dict as an HTML table."""
+        if not tbl_data:
+            return "<em>—</em>"
+        cols: list[str] = []
+        for rv in tbl_data.values():
+            if isinstance(rv, dict):
+                for c in rv:
+                    if c not in cols:
+                        cols.append(c)
+        if not cols:
+            return "<em>—</em>"
+        hdr = "".join(f"<th>{_he(c)}</th>" for c in cols)
+        body = ""
+        for rlbl, rv in tbl_data.items():
+            cells = "".join(
+                f'<td>{_he(rv.get(c,"") or "") if isinstance(rv,dict) else ""}</td>'
+                for c in cols
+            )
+            body += f'<tr><td class="api-lbl">{_he(rlbl)}</td>{cells}</tr>'
+        return (
+            f'<table class="api-tbl">'
+            f'<thead><tr><th></th>{hdr}</tr></thead>'
+            f'<tbody>{body}</tbody>'
+            f'</table>'
+        )
 
     def row_html(label: str, value: object) -> str:
         if isinstance(value, list):
             display = ", ".join(value) if value else "<em>—</em>"
+        elif isinstance(value, dict):
+            display = _api_table_html(value)
         else:
-            display = value.strip() if value else "<em>—</em>"
+            display = _he(value).replace("\n", "<br>") if value and value.strip() else "<em>—</em>"
         return (
             f'<tr><td class="key">{_he(label)}</td>'
             f'<td class="val">{display}</td></tr>\n'
@@ -336,6 +449,29 @@ def build_html_report(
   }}
   .data-table td.val {{ font-size: 13px; color: #111827; }}
   .data-table td.val em {{ color: #D1D5DB; font-style: normal; }}
+
+  /* ── nested API table (inside a .val cell) ── */
+  .api-tbl {{
+    width: 100%; border-collapse: collapse;
+    font-size: 12px; margin: 2px 0;
+  }}
+  .api-tbl thead tr {{ background: #EEF2FF; }}
+  .api-tbl thead th {{
+    padding: 6px 10px; text-align: left;
+    color: #4338CA; font-weight: 600;
+    border: 1px solid #E0E7FF;
+  }}
+  .api-tbl tbody tr:nth-child(even) {{ background: #F9FAFB; }}
+  .api-tbl tbody tr:nth-child(odd)  {{ background: #FFFFFF; }}
+  .api-tbl tbody td {{
+    padding: 6px 10px; vertical-align: top;
+    border: 1px solid #F3F4F6; color: #111827;
+    white-space: pre-wrap;
+  }}
+  .api-tbl td.api-lbl {{
+    font-weight: 600; color: #374151;
+    background: #F3F4F6; white-space: nowrap;
+  }}
 
   /* ── footer ── */
   .footer {{
@@ -438,6 +574,17 @@ _NAV_STATES: dict[str, dict] = {
         badge_bg="#4338CA", badge_fg="#FFFFFF",
     ),
 }
+
+
+def _is_yesno_col(col_name: str) -> bool:
+    """True when a table column expects a Yes/No answer."""
+    lo = col_name.lower()
+    return (
+        col_name.rstrip().endswith("?")
+        or any(k in lo for k in ("applies", "applicable", "supported",
+                                  "available", "yes/no", "y/n", "support",
+                                  "applicable to"))
+    )
 
 
 def _paint_nav_canvas(
@@ -925,10 +1072,19 @@ class SurveyApp(tk.Tk):
     def _is_section_done(self, section_id: str) -> bool:
         """Return True if any non-empty answer was recorded for this section."""
         data = self.responses.get(section_id, {})
-        return any(
-            (isinstance(v, list) and v) or (isinstance(v, str) and v.strip())
-            for v in data.values()
-        )
+        for v in data.values():
+            if isinstance(v, list) and v:
+                return True
+            if isinstance(v, str) and v.strip():
+                return True
+            if isinstance(v, dict):
+                # api_table: {row_label: {col: value}}
+                for row_val in v.values():
+                    if isinstance(row_val, dict):
+                        if any(cv.strip() for cv in row_val.values()
+                               if isinstance(cv, str)):
+                            return True
+        return False
 
     # ── Progress ───────────────────────────────────────────────────────────
 
@@ -1016,6 +1172,23 @@ class SurveyApp(tk.Tk):
             os.path.basename(self.docx_path),
             f"{len(self.all_leaves)} sections · click any section to begin",
         )
+
+        # ── Intro text (paragraphs before the first heading in the docx) ──
+        intro_fields = [f for f in self.root_node.fields if f.ftype == "text"]
+        if intro_fields:
+            intro_card = tk.Frame(
+                pad, bg=C["card_bg"],
+                highlightthickness=1, highlightbackground=C["border"],
+            )
+            intro_card.pack(fill="x", pady=(0, 20))
+            for field in intro_fields:
+                tk.Label(
+                    intro_card,
+                    text=field.label,
+                    bg=C["card_bg"], fg=C["text_primary"],
+                    font=FONT, anchor="w", justify="left",
+                    wraplength=820, padx=20, pady=8,
+                ).pack(fill="x")
 
         # Grid of top-level section cards
         grid = tk.Frame(pad, bg=C["bg"])
@@ -1250,6 +1423,12 @@ class SurveyApp(tk.Tk):
             # ── Section divider ──────────────────────────────────────────
             tk.Frame(parent, bg=C["divider"], height=1).pack(fill="x", pady=(14, 0))
 
+            if field.ftype == "api_table":
+                # Table gets its own header row; no extra label needed
+                tbl_vars = self._build_api_table_field(parent, field, label_val)
+                self._field_vars.append(("api_table", field.label, tbl_vars))
+                continue
+
             # Field label
             lbl_text = textwrap.shorten(field.label, width=100, placeholder="…")
             tk.Label(
@@ -1314,6 +1493,206 @@ class SurveyApp(tk.Tk):
             entry.bind("<FocusIn>",  _focus_in)
             entry.bind("<FocusOut>", _focus_out)
             return var
+
+    def _build_api_table_field(
+        self, parent: tk.Frame, field: FormField, saved_val
+    ) -> dict:
+        """
+        Render a multi-column API table with editable cells.
+
+        Layout:
+          ┌──────────────────┬───────────┬───────────┬──────────────────────┐
+          │ (row label col)  │  Col 1    │  Col 2    │  Col N               │
+          ├──────────────────┼───────────┼───────────┼──────────────────────┤
+          │ Row A            │ [Text]    │ [Text]    │ [Text]               │
+          │ Row B            │ [Text]    │ [Text]    │ [Text]               │
+          └──────────────────┴───────────┴───────────┴──────────────────────┘
+
+        Returns {row_label: {col_name: proxy}} where proxy.get() → str.
+        """
+        saved     = saved_val if isinstance(saved_val, dict) else {}
+        col_names = field.options
+        row_lbls  = field.rows
+        n_cols    = len(col_names)
+
+        result: dict = {}
+
+        # ── Outer border frame ────────────────────────────────────────────
+        outer = tk.Frame(parent, bg=C["border"])
+        outer.pack(fill="x", pady=(8, 4))
+
+        # tbl is the grid container; its background shows through cell gaps
+        # creating 1-px grid lines automatically.
+        tbl = tk.Frame(outer, bg=C["border"])
+        tbl.pack(fill="x", padx=1, pady=1)
+
+        # Column weight config: row-label col is fixed, data cols flex
+        tbl.grid_columnconfigure(0, weight=0, minsize=170)
+        for ci, cn in enumerate(col_names):
+            cn_lo = cn.lower()
+            if _is_yesno_col(cn):
+                w = 1          # narrow — just fits two pill buttons
+            elif any(k in cn_lo for k in ("response", "sample", "example", "output")):
+                w = 5
+            elif any(k in cn_lo for k in ("endpoint", "sdk", "url", "path", "method")):
+                w = 3
+            elif any(k in cn_lo for k in ("parameter", "param", "argument", "body")):
+                w = 4
+            else:
+                w = 3
+            tbl.grid_columnconfigure(ci + 1, weight=w)
+
+        # ── Header row ───────────────────────────────────────────────────
+        HDR_BG = C["accent_lt"]
+        tk.Label(
+            tbl, text="", bg=HDR_BG,
+        ).grid(row=0, column=0, sticky="nsew",
+               padx=(0, 1), pady=(0, 1), ipady=4)
+        for ci, cn in enumerate(col_names):
+            pad_r = 0 if ci == n_cols - 1 else 1
+            tk.Label(
+                tbl, text=cn, bg=HDR_BG,
+                fg=C["accent"], font=FONT_BOLD,
+                anchor="w", padx=10, pady=6,
+            ).grid(row=0, column=ci + 1, sticky="nsew",
+                   padx=(0, pad_r), pady=(0, 1))
+
+        # ── Data rows ────────────────────────────────────────────────────
+        for ri, row_lbl in enumerate(row_lbls):
+            saved_row = saved.get(row_lbl, {}) if isinstance(saved, dict) else {}
+            row_vars: dict = {}
+            grid_row = ri + 1
+            row_bg   = C["card_bg"] if ri % 2 == 0 else "#F9FAFB"
+            pad_b    = 0 if ri == len(row_lbls) - 1 else 1
+
+            # Row label cell
+            tk.Label(
+                tbl, text=row_lbl,
+                bg=row_bg, fg=C["text_primary"],
+                font=FONT_BOLD, anchor="nw",
+                justify="left", wraplength=155,
+                padx=10, pady=8,
+            ).grid(row=grid_row, column=0, sticky="nsew",
+                   padx=(0, 1), pady=(0, pad_b))
+
+            # Input cells (one per column)
+            for ci, col_name in enumerate(col_names):
+                saved_cell = ""
+                if isinstance(saved_row, dict):
+                    saved_cell = str(saved_row.get(col_name, "") or "")
+
+                pad_r = 0 if ci == n_cols - 1 else 1
+                cell_frame = tk.Frame(tbl, bg=row_bg)
+                cell_frame.grid(row=grid_row, column=ci + 1,
+                                sticky="nsew", padx=(0, pad_r), pady=(0, pad_b))
+
+                if _is_yesno_col(col_name):
+                    # ── Yes / No pill toggle ──────────────────────────────
+                    inner = tk.Frame(cell_frame, bg=row_bg)
+                    inner.pack(fill="x", padx=8, pady=8)
+
+                    yn_var = tk.StringVar(value=saved_cell or "")
+                    yn_btns: dict = {}
+
+                    _YN_STYLE = {
+                        "Yes": {"sel": (C["green"],   "#FFFFFF"),
+                                "off": ("#D1FAE5",    "#065F46")},
+                        "No":  {"sel": (C["red"],     "#FFFFFF"),
+                                "off": ("#FEE2E2",    "#991B1B")},
+                    }
+
+                    def _yn_refresh(v=yn_var, b=yn_btns):
+                        for t_, btn_ in b.items():
+                            bg_, fg_ = (
+                                _YN_STYLE[t_]["sel"] if v.get() == t_
+                                else _YN_STYLE[t_]["off"]
+                            )
+                            btn_.config(bg=bg_, fg=fg_)
+
+                    # Capture b and rf as defaults so each row's click handler
+                    # references its OWN dict and refresh function, not the
+                    # last-assigned names in the enclosing loop scope.
+                    def _yn_click(choice, v=yn_var, b=yn_btns, rf=_yn_refresh):
+                        v.set("" if v.get() == choice else choice)
+                        rf(v, b)
+
+                    for choice in ("Yes", "No"):
+                        bg0, fg0 = _YN_STYLE[choice]["off"]
+                        btn = tk.Label(
+                            inner, text=choice, cursor="hand2",
+                            bg=bg0, fg=fg0, font=FONT_SMALL,
+                            padx=10, pady=3, relief="flat",
+                        )
+                        btn.pack(side="left", padx=(0, 4))
+                        # Capture _yn_click early via f= default arg
+                        btn.bind("<Button-1>",
+                                 lambda _, c=choice, f=_yn_click: f(c))
+                        yn_btns[choice] = btn
+
+                    _yn_refresh()
+
+                    class _YNProxy:
+                        def __init__(self_, v): self_._v = v
+                        def get(self_): return self_._v.get()
+
+                    row_vars[col_name] = _YNProxy(yn_var)
+
+                else:
+                    # ── Text cell with placeholder watermark ──────────────
+                    cn_lo = col_name.lower()
+                    is_tall = any(k in cn_lo for k in (
+                        "response", "sample", "example", "output",
+                        "parameter", "param", "argument", "body", "payload",
+                    ))
+                    cell_h = 4 if is_tall else 2
+                    # Prefer the original docx cell text as placeholder; fall
+                    # back to a generated hint if the cell was empty in the docx.
+                    doc_hint = field.hints.get(row_lbl, {}).get(col_name, "")
+                    ph = doc_hint if doc_hint else \
+                         f"Enter {col_name.rstrip('?').strip().lower()}…"
+
+                    has_saved = bool(saved_cell)
+                    txt = tk.Text(
+                        cell_frame, height=cell_h, font=FONT,
+                        bg=row_bg,
+                        fg=C["text_primary"] if has_saved else C["text_muted"],
+                        relief="flat", padx=8, pady=6, wrap="word",
+                        insertbackground=C["accent"],
+                        highlightthickness=1,
+                        highlightbackground=row_bg,
+                        highlightcolor=C["accent"],
+                    )
+                    txt.pack(fill="both", expand=True)
+                    txt.insert("1.0", saved_cell if has_saved else ph)
+
+                    def _fi(_, t=txt, p=ph):
+                        if t.get("1.0", "end-1c") == p:
+                            t.delete("1.0", "end")
+                            t.config(fg=C["text_primary"])
+                        t.config(highlightbackground=C["accent"])
+
+                    def _fo(_, t=txt, p=ph, bg=row_bg):
+                        t.config(highlightbackground=bg)
+                        if not t.get("1.0", "end-1c").strip():
+                            t.delete("1.0", "end")
+                            t.insert("1.0", p)
+                            t.config(fg=C["text_muted"])
+
+                    txt.bind("<FocusIn>",  _fi)
+                    txt.bind("<FocusOut>", _fo)
+
+                    def _make_proxy(t, p=ph):
+                        class _P:
+                            def get(self_):
+                                v = t.get("1.0", "end-1c")
+                                return "" if v == p else v
+                        return _P()
+
+                    row_vars[col_name] = _make_proxy(txt)
+
+            result[row_lbl] = row_vars
+
+        return result
 
     def _build_checkbox_field(
         self, parent: tk.Frame, field: FormField, saved_val
@@ -1385,6 +1764,11 @@ class SurveyApp(tk.Tk):
             kind, label, payload = entry
             if kind == "checkbox":
                 data[label] = [opt for opt, var in payload if var.get()]
+            elif kind == "api_table":
+                data[label] = {
+                    row_lbl: {col: p.get() for col, p in cols.items()}
+                    for row_lbl, cols in payload.items()
+                }
             else:
                 data[label] = payload.get()
 
