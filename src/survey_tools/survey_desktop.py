@@ -542,9 +542,8 @@ class ScrollableFrame(tk.Frame):
 
         self.inner_frame.bind("<Configure>", self._on_frame_configure)
         self._canvas.bind("<Configure>", self._on_canvas_configure)
-        self._canvas.bind_all("<MouseWheel>",  self._on_mousewheel)
-        self._canvas.bind_all("<Button-4>",    self._on_mousewheel)
-        self._canvas.bind_all("<Button-5>",    self._on_mousewheel)
+        # Mouse-wheel bindings are handled at the app level (_dispatch_scroll)
+        # to avoid multiple ScrollableFrame instances fighting over bind_all.
 
     def _set_scrollbar(self, first, last):
         """Show the scrollbar only when content doesn't fully fit."""
@@ -654,6 +653,15 @@ class SurveyApp(tk.Tk):
 
     # ── UI construction ────────────────────────────────────────────────────
 
+    def _dispatch_scroll(self, event):
+        """Route mouse-wheel events to whichever ScrollableFrame is under the cursor."""
+        widget = event.widget
+        while widget is not None:
+            if isinstance(widget, ScrollableFrame):
+                widget._on_mousewheel(event)
+                return
+            widget = getattr(widget, "master", None)
+
     def _configure_styles(self):
         """Set up ttk styles used by the progress bar and scrollbar."""
         style = ttk.Style(self)
@@ -719,6 +727,12 @@ class SurveyApp(tk.Tk):
         self._content_scroll = ScrollableFrame(body, bg=C["bg"])
         self._content_scroll.pack(side="left", fill="both", expand=True)
         self._content = self._content_scroll.inner_frame
+
+        # Single app-level mouse-wheel dispatcher — walks the widget
+        # hierarchy from the event source to find the nearest ScrollableFrame.
+        self.bind_all("<MouseWheel>", self._dispatch_scroll)
+        self.bind_all("<Button-4>",   self._dispatch_scroll)
+        self.bind_all("<Button-5>",   self._dispatch_scroll)
 
         # ── Status bar ────────────────────────────────────────────────────
         status_bar = tk.Frame(self, bg=C["sidebar_bg"], height=36)
