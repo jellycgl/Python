@@ -147,6 +147,7 @@ class FormField:
         options: list[str] | None = None,
         rows: list[str] | None = None,
         hints: dict | None = None,
+        hint: str = "",
     ):
         self.ftype   = ftype   # "text" | "checkbox" | "table_row" | "api_table"
         self.label   = label
@@ -154,6 +155,7 @@ class FormField:
         self.rows    = rows    or []   # api_table row labels
         self.hints   = hints   or {}   # api_table pre-filled cell text used as placeholders
                                        # {row_label: {col_name: original_cell_text}}
+        self.hint    = hint    or ""   # single-value placeholder (table_row / text fields)
 
 
 def _extract_checkboxes(text: str) -> list[str]:
@@ -227,7 +229,9 @@ def parse_document(docx_path: str) -> Node:
                     if cbs:
                         parent.fields.append(FormField("checkbox", label, cbs))
                     else:
-                        parent.fields.append(FormField("table_row", label))
+                        # Store the docx second-column text as the placeholder hint
+                        parent.fields.append(FormField("table_row", label,
+                                                        hint=second.strip()))
 
             if n_cols >= 3:
                 # ── Structured multi-column table (e.g. API endpoints) ────
@@ -1545,53 +1549,127 @@ class SurveyApp(tk.Tk):
 
     def _build_text_field(
         self, parent: tk.Frame, field: FormField, saved_val
-    ) -> tk.StringVar:
-        """Render a single-line or multi-line text input and return its StringVar."""
-        var = tk.StringVar(value=saved_val if isinstance(saved_val, str) else "")
+    ):
+        """Render a single-line or multi-line text input and return a proxy with .get()."""
         is_long = len(field.label) > 70 or field.ftype == "table_row"
+        ph = field.hint  # placeholder text from the original docx second column
 
         if is_long:
             frame = tk.Frame(parent, bg=C["card_bg"],
                              highlightthickness=1, highlightbackground=C["border"])
             frame.pack(fill="x", pady=(0, 4))
+
+            has_saved = bool(saved_val and isinstance(saved_val, str))
+            display_text = saved_val if has_saved else ph
+
             txt = tk.Text(
                 frame, height=2, font=FONT,
-                bg=C["card_bg"], fg=C["text_primary"],
+                bg=C["card_bg"],
+                fg=C["text_primary"] if has_saved else C["text_muted"],
                 relief="flat", padx=8, pady=6, wrap="word",
                 insertbackground=C["accent"],
+                highlightthickness=0,
             )
             txt.pack(fill="x")
-            if saved_val:
-                txt.insert("1.0", saved_val)
+            if display_text:
+                txt.insert("1.0", display_text)
 
-            def _get_text():
-                return txt.get("1.0", "end-1c")
+            if ph:
+                def _fi_long(_, t=txt, p=ph, fr=frame):
+                    if t.get("1.0", "end-1c") == p:
+                        t.delete("1.0", "end")
+                        t.config(fg=C["text_primary"])
+                    fr.config(highlightbackground=C["accent"])
 
-            # Wrap in a fake StringVar-like object
+                def _fo_long(_, t=txt, p=ph, fr=frame):
+                    fr.config(highlightbackground=C["border"])
+                    if not t.get("1.0", "end-1c").strip():
+                        t.delete("1.0", "end")
+                        t.insert("1.0", p)
+                        t.config(fg=C["text_muted"])
+
+                txt.bind("<FocusIn>",  _fi_long)
+                txt.bind("<FocusOut>", _fo_long)
+            else:
+                def _fi_plain(_, fr=frame):
+                    fr.config(highlightbackground=C["accent"])
+                def _fo_plain(_, fr=frame):
+                    fr.config(highlightbackground=C["border"])
+                txt.bind("<FocusIn>",  _fi_plain)
+                txt.bind("<FocusOut>", _fo_plain)
+
             class _TextProxy:
-                def get(self_inner): return _get_text()
-            return _TextProxy()
+                def __init__(self_, t, p):
+                    self_._t = t
+                    self_._p = p
+                def get(self_):
+                    v = self_._t.get("1.0", "end-1c")
+                    return "" if v == self_._p else v
+
+            return _TextProxy(txt, ph)
 
         else:
+            # Short single-line entry — use Entry with placeholder simulation
             entry_frame = tk.Frame(
                 parent, bg=C["card_bg"],
                 highlightthickness=1, highlightbackground=C["border"],
             )
             entry_frame.pack(fill="x", pady=(0, 4))
-            entry = tk.Entry(
-                entry_frame, textvariable=var, font=FONT,
-                bg=C["card_bg"], fg=C["text_primary"],
-                relief="flat", bd=0,
-                insertbackground=C["accent"],
-            )
-            entry.pack(fill="x", ipady=7, padx=8)
 
-            # Focus highlight
-            def _focus_in(_): entry_frame.config(highlightbackground=C["accent"])
-            def _focus_out(_): entry_frame.config(highlightbackground=C["border"])
-            entry.bind("<FocusIn>",  _focus_in)
-            entry.bind("<FocusOut>", _focus_out)
-            return var
+            has_saved = bool(saved_val and isinstance(saved_val, str))
+
+            if ph:
+                # Simulate placeholder via fg colour trick (Entry has no native placeholder)
+                var = tk.StringVar(value=saved_val if has_saved else ph)
+                entry = tk.Entry(
+                    entry_frame, textvariable=var, font=FONT,
+                    bg=C["card_bg"],
+                    fg=C["text_primary"] if has_saved else C["text_muted"],
+                    relief="flat", bd=0,
+                    insertbackground=C["accent"],
+                )
+                entry.pack(fill="x", ipady=7, padx=8)
+
+                def _fi_e(_, e=entry, v=var, p=ph, fr=entry_frame):
+                    if v.get() == p:
+                        v.set("")
+                        e.config(fg=C["text_primary"])
+                    fr.config(highlightbackground=C["accent"])
+
+                def _fo_e(_, e=entry, v=var, p=ph, fr=entry_frame):
+                    fr.config(highlightbackground=C["border"])
+                    if not v.get().strip():
+                        v.set(p)
+                        e.config(fg=C["text_muted"])
+
+                entry.bind("<FocusIn>",  _fi_e)
+                entry.bind("<FocusOut>", _fo_e)
+
+                class _EntryProxy:
+                    def __init__(self_, v, p):
+                        self_._v = v
+                        self_._p = p
+                    def get(self_):
+                        v = self_._v.get()
+                        return "" if v == self_._p else v
+
+                return _EntryProxy(var, ph)
+
+            else:
+                var = tk.StringVar(value=saved_val if isinstance(saved_val, str) else "")
+                entry = tk.Entry(
+                    entry_frame, textvariable=var, font=FONT,
+                    bg=C["card_bg"], fg=C["text_primary"],
+                    relief="flat", bd=0,
+                    insertbackground=C["accent"],
+                )
+                entry.pack(fill="x", ipady=7, padx=8)
+
+                def _focus_in(_): entry_frame.config(highlightbackground=C["accent"])
+                def _focus_out(_): entry_frame.config(highlightbackground=C["border"])
+                entry.bind("<FocusIn>",  _focus_in)
+                entry.bind("<FocusOut>", _focus_out)
+                return var
 
     def _build_api_table_field(
         self, parent: tk.Frame, field: FormField, saved_val
