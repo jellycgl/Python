@@ -1166,29 +1166,128 @@ class SurveyApp(tk.Tk):
             self._show_welcome()
             return
 
-        pad = self._pad_frame()
-        self._section_header(
-            pad,
-            os.path.basename(self.docx_path),
-            f"{len(self.all_leaves)} sections · click any section to begin",
-        )
+        pad = self._pad_frame(padx=36, pady=0)
 
-        # ── Intro text (paragraphs before the first heading in the docx) ──
+        # ── Categorise intro paragraphs ──────────────────────────────────
         intro_fields = [f for f in self.root_node.fields if f.ftype == "text"]
-        if intro_fields:
-            intro_card = tk.Frame(
+        hero_fields, body_fields, note_fields = [], [], []
+        for f in intro_fields:
+            first = f.label[0] if f.label else ""
+            if first and ord(first) > 127 and not first.isalpha() and not first.isdigit():
+                note_fields.append(f)          # ⚡ ☆ ★ …  → amber note box
+            elif len(f.label) <= 90:
+                hero_fields.append(f)          # short → hero title / subtitle
+            else:
+                body_fields.append(f)          # long  → body card
+
+        # ── Hero banner ──────────────────────────────────────────────────
+        HERO_BG  = C["accent"]
+        HERO_FG  = "#FFFFFF"
+        HERO_SUB = "#C7D2FE"
+
+        hero = tk.Frame(pad, bg=HERO_BG)
+        hero.pack(fill="x", pady=(28, 16))
+        # Top highlight stripe
+        tk.Frame(hero, bg="#818CF8", height=3).pack(fill="x")
+
+        hero_row = tk.Frame(hero, bg=HERO_BG)
+        hero_row.pack(fill="x")
+
+        # Left: title + subtitle
+        left_col = tk.Frame(hero_row, bg=HERO_BG)
+        left_col.pack(side="left", fill="both", expand=True, padx=28, pady=22)
+
+        title_txt = hero_fields[0].label if hero_fields else os.path.basename(self.docx_path)
+        title_lbl = tk.Label(
+            left_col, text=title_txt,
+            bg=HERO_BG, fg=HERO_FG,
+            font=(FONT_FAMILY, 15, "bold"),
+            anchor="w", justify="left", wraplength=700,
+        )
+        title_lbl.pack(fill="x", pady=(0, 6))
+        sub_lbls = []
+        for sf in (hero_fields[1:] if hero_fields else []):
+            lbl = tk.Label(
+                left_col, text=sf.label,
+                bg=HERO_BG, fg=HERO_SUB,
+                font=FONT, anchor="w", justify="left", wraplength=700,
+            )
+            lbl.pack(fill="x", pady=(0, 2))
+            sub_lbls.append(lbl)
+
+        # Right: section-count badge
+        right_col = tk.Frame(hero_row, bg=HERO_BG)
+        right_col.pack(side="right", padx=28, pady=22)
+        badge = tk.Frame(right_col, bg="#6366F1")
+        badge.pack()
+        tk.Label(
+            badge,
+            text=str(len(self.all_leaves)),
+            bg="#6366F1", fg=HERO_FG,
+            font=(FONT_FAMILY, 22, "bold"), padx=18, pady=10,
+        ).pack()
+        tk.Label(
+            right_col, text="sections to complete",
+            bg=HERO_BG, fg=HERO_SUB, font=FONT_SMALL,
+        ).pack(pady=(6, 0))
+
+        # Bottom accent stripe
+        tk.Frame(hero, bg="#4338CA", height=2).pack(fill="x")
+
+        # ── Body paragraphs ──────────────────────────────────────────────
+        auto_wrap_labels: list[tk.Label] = [title_lbl] + sub_lbls
+        if body_fields:
+            body_card = tk.Frame(
                 pad, bg=C["card_bg"],
                 highlightthickness=1, highlightbackground=C["border"],
             )
-            intro_card.pack(fill="x", pady=(0, 20))
-            for field in intro_fields:
-                tk.Label(
-                    intro_card,
-                    text=field.label,
+            body_card.pack(fill="x", pady=(0, 10))
+            for i, f in enumerate(body_fields):
+                if i > 0:
+                    tk.Frame(body_card, bg=C["divider"], height=1).pack(
+                        fill="x", padx=20
+                    )
+                lbl = tk.Label(
+                    body_card, text=f.label,
                     bg=C["card_bg"], fg=C["text_primary"],
                     font=FONT, anchor="w", justify="left",
-                    wraplength=820, padx=20, pady=8,
-                ).pack(fill="x")
+                    wraplength=860, padx=24, pady=12,
+                )
+                lbl.pack(fill="x")
+                auto_wrap_labels.append(lbl)
+
+        # ── Note / highlight boxes (⚡ ☆ paragraphs) ─────────────────────
+        for f in note_fields:
+            note_outer = tk.Frame(pad, bg="#FDE68A")   # amber border
+            note_outer.pack(fill="x", pady=(0, 8))
+            note_inner = tk.Frame(note_outer, bg="#FFFBEB")
+            note_inner.pack(fill="x", padx=1, pady=1)
+            tk.Frame(note_inner, bg="#F59E0B", width=4).pack(
+                side="left", fill="y"
+            )
+            lbl = tk.Label(
+                note_inner, text=f.label,
+                bg="#FFFBEB", fg="#78350F",
+                font=FONT, anchor="w", justify="left",
+                wraplength=860, padx=16, pady=10,
+            )
+            lbl.pack(side="left", fill="x", expand=True)
+            auto_wrap_labels.append(lbl)
+
+        # Auto-update wraplength on resize so text never clips
+        def _on_resize(_, labels=auto_wrap_labels, p=pad):
+            avail = p.winfo_width() - 100
+            if avail > 100:
+                for lb in labels:
+                    lb.config(wraplength=avail)
+        pad.bind("<Configure>", _on_resize)
+
+        # ── Sections heading ─────────────────────────────────────────────
+        tk.Label(
+            pad, text="Sections",
+            bg=C["bg"], fg=C["text_muted"],
+            font=FONT_BOLD, anchor="w",
+        ).pack(fill="x", pady=(8, 6))
 
         # Grid of top-level section cards
         grid = tk.Frame(pad, bg=C["bg"])
