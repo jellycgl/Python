@@ -1,0 +1,10 @@
+{
+    "apiServerName": "",
+    "apiRequests": [
+        {
+            "category": "devices",
+            "api_url": ""
+        }
+    ],
+    "testLimit": 1
+}
