@@ -1,0 +1,30 @@
+{
+    "apiServerName": "infoblox",
+    "apiRequests": [
+        {
+            "enable": true,
+            "purpose": "discovery",
+            "discovery_by": "ip_address",
+            "api_url": "/wapi/v2.10/ipv4address",
+            "subnet_url": "/wapi/v2.10/network",
+            "_return_fields": [
+                "ip_address", "names", "mac_address", "dhcp_client_identifier",
+                "status", "types", "discover_now_status", "usage",
+                "lease_state", "username", "discovered_data", "network", "fingerprint"
+            ],
+            "ip_address": [],
+            "network": [],
+            "result_filter": []
+        },
+        {
+            "enable": true,
+            "purpose": "dynamic_group",
+            "api_url": "/wapi/v2.7/network",
+            "_return_fields": ["network", "network_view", "comment", "extattrs"],
+            "group_by": "Zone",
+            "group_value_field": "network",
+            "result_filter": []
+        }
+    ],
+    "testLimit": 5
+}

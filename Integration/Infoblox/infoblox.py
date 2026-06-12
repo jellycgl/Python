@@ -34,6 +34,21 @@ FUNC_NAME = "getData"
 SUBNET_URL = "/wapi/v2.10/network"
 IPV4_URL = "/wapi/v2.10/ipv4address"
 
+# Endpoint used to build Dynamic Groups. Returns one record per network/subnet,
+# each carrying its custom "extattrs" (Building/City/Zone/...). The CIDR is in
+# "network". Overridable per request via "api_url".
+NETWORK_URL = "/wapi/v2.7/network"
+
+# Default fields requested when building Dynamic Groups. "extattrs" carries the
+# user-selectable grouping columns (Zone, Building, City, ...); "network" is the
+# subnet value collected into each group.
+DYNAMIC_GROUP_RETURN_FIELDS = [
+    "network",
+    "network_view",
+    "comment",
+    "extattrs",
+]
+
 # Fields requested back from /wapi/v2.10/ipv4address. Mirrors the reference
 # adapter script exactly; sent as api_parm.query._return_fields on that call.
 RETURN_FIELDS = [
@@ -235,3 +250,118 @@ def extract_ips(
     )
 
     return values
+
+
+# =========================================================
+# Dynamic Group: read a column value (top-level or extattrs)
+# =========================================================
+def read_attr(record: dict, field: str) -> Any:
+    """
+    Read one column value from a network record for Dynamic Group building.
+
+    Infoblox returns top-level fields (e.g. "network", "network_view") flat,
+    but custom attributes live under extattrs.<name>.value, for example:
+
+        {"extattrs": {"Zone": {"value": "CORE"}}}
+
+    So `field="network"` reads the CIDR directly, while `field="Zone"`
+    resolves to extattrs.Zone.value. A dotted path is honored as-is.
+    Returns None when the field is absent.
+    """
+    if not field:
+        return None
+
+    direct = get_nested_value(record, field)
+    if isinstance(direct, dict):
+        # The field pointed straight at an extattr object {"value": ...}.
+        if "value" in direct:
+            return direct.get("value")
+    elif direct is not None:
+        return direct
+
+    # Fall back to the Infoblox custom-attribute location.
+    return get_nested_value(record, f"extattrs.{field}.value")
+
+
+# =========================================================
+# Dynamic Group: build {group_name -> [subnet, ...]} mapping
+# =========================================================
+def build_group_mapping(
+    response: Any,
+    request: dict,
+    test_limit: int | None = None,
+) -> dict:
+    """
+    Parse a /network (+extattrs) response into a Dynamic Group mapping.
+
+    Groups records by the column named in `request["group_by"]` (e.g. "Zone")
+    and collects the value of `request["group_value_field"]` (default
+    "network") into each group. For the table in the spec, group_by="Zone"
+    yields {"CORE": ["10.0.104.0/24", ...], ...} -- every network whose Zone is
+    CORE lands in the "CORE" group.
+
+    :param response:   Raw adapter response for this request.
+    :param request:    The apiRequest dict; reads "group_by",
+                       "group_value_field" and optional "result_filter".
+    :param test_limit: Optional cap on the number of records processed.
+    :return: Ordered dict {group_name: [subnet, ...]} with de-duplicated values.
+    """
+    records = normalize_records(response)
+    if not records:
+        pluginfw.AddLog(
+            "No records returned from API for Dynamic Group build.",
+            pluginfw.WARNING,
+        )
+        return {}
+
+    group_by = request.get("group_by")
+    if not group_by:
+        pluginfw.AddLog(
+            "Dynamic Group request missing 'group_by'; cannot build mapping.",
+            pluginfw.ERROR,
+        )
+        return {}
+
+    value_field = request.get("group_value_field") or "network"
+    result_filter = request.get("result_filter") or []
+
+    if test_limit and isinstance(test_limit, int):
+        records = records[:test_limit]
+        pluginfw.AddLog(
+            f"Test mode enabled. Processing first {test_limit} records only.",
+            pluginfw.INFO,
+        )
+
+    mapping: dict = {}
+    matched = 0
+
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        if not match_filters(record, result_filter):
+            continue
+
+        group_name = read_attr(record, group_by)
+        value = read_attr(record, value_field)
+        if group_name is None or value is None:
+            continue
+
+        group_name = str(group_name).strip()
+        value = str(value).strip()
+        if not group_name or not value:
+            continue
+
+        matched += 1
+        members = mapping.setdefault(group_name, [])
+        if value not in members:
+            members.append(value)
+
+    total_values = sum(len(v) for v in mapping.values())
+    pluginfw.AddLog(
+        f"Built {len(mapping)} Dynamic Group(s) from {matched}/{len(records)} "
+        f"record(s) by '{group_by}' -> '{value_field}' "
+        f"({total_values} value(s)).",
+        pluginfw.INFO,
+    )
+
+    return mapping

@@ -125,6 +125,8 @@ def _submit_discover_task(
                 "ipSrc": 0,
                 "subnetList": [],
             },
+            # hostips accepts both single IP addresses and subnet CIDRs, so a
+            # discovery-by-network request can pass subnets through directly.
             "hostips": ip_list,
             "apiServers": [],
             "isAllDevices": False,
@@ -152,7 +154,10 @@ def _submit_discover_task(
 # =========================================================
 def discover_new_ips(new_ips: List[str]) -> bool:
     """
-    Trigger an on-demand discovery task for the given host IPs.
+    Trigger an on-demand discovery task for the given hosts.
+
+    `new_ips` may contain single IP addresses and/or subnet CIDRs
+    (discovery-by-network); both are valid "hostips" values.
     """
 
     global _log_thread_stopped
