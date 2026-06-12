@@ -79,6 +79,25 @@ def _retrieve_log_thread(source_id: str) -> None:
 
 
 # =========================================================
+# Describe a host list for logging
+# =========================================================
+def _describe_targets(targets: List[str]) -> str:
+    """
+    Build a human label for a discovery target list.
+
+    `targets` may hold single IPs and/or subnet CIDRs, so report whichever is
+    present: "2 subnet(s)", "3 IP(s)", or "1 subnet(s) + 2 IP(s)" for a mix.
+    """
+    subnets = sum(1 for t in targets if "/" in t)
+    ips = len(targets) - subnets
+    if subnets and ips:
+        return f"{subnets} subnet(s) + {ips} IP(s)"
+    if subnets:
+        return f"{subnets} subnet(s)"
+    return f"{ips} IP(s)"
+
+
+# =========================================================
 # Submit Discover Task
 # =========================================================
 def _submit_discover_task(
@@ -164,7 +183,7 @@ def discover_new_ips(new_ips: List[str]) -> bool:
 
     if not new_ips:
         pluginfw.AddLog(
-            "No new IPs to discover.",
+            "No new targets to discover.",
             pluginfw.INFO,
         )
         return True
@@ -173,7 +192,7 @@ def discover_new_ips(new_ips: List[str]) -> bool:
     unique_ips = list(dict.fromkeys(ip for ip in new_ips if ip))
     if not unique_ips:
         pluginfw.AddLog(
-            "No valid IPs after filtering.",
+            "No valid targets after filtering.",
             pluginfw.INFO,
         )
         return True
@@ -198,7 +217,7 @@ def discover_new_ips(new_ips: List[str]) -> bool:
     log_thread.start()
 
     pluginfw.AddLog(
-        f"Starting discovery for {len(unique_ips)} new IP(s): {unique_ips}",
+        f"Starting discovery for {_describe_targets(unique_ips)}: {unique_ips}",
         pluginfw.INFO,
     )
 

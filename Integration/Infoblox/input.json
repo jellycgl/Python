@@ -4,7 +4,7 @@
         {
             "enable": true,
             "purpose": "discovery",
-            "discovery_by": "ip_address",
+            "discovery_by": "network",
             "api_url": "/wapi/v2.10/ipv4address",
             "subnet_url": "/wapi/v2.10/network",
             "_return_fields": [
