@@ -17,7 +17,7 @@
             "result_filter": []
         },
         {
-            "enable": true,
+            "enable": false,
             "purpose": "dynamic_group",
             "api_url": "/wapi/v2.7/network",
             "_return_fields": ["network", "network_view", "comment", "extattrs"],
@@ -26,5 +26,5 @@
             "result_filter": []
         }
     ],
-    "testLimit": 5
+    "testLimit": 1
 }

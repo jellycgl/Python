@@ -106,6 +106,7 @@ def _submit_discover_task(
 ) -> dict:
 
     task_id = pluginfw.GetTaskId()
+    #task_id = "d86e9b34-da39-44a7-8635-a5a98bcc67a6"
     op_user = pluginfw.GetOpUserName()
     op_user_id = pluginfw.GetOpUserId()
     domain_info = sysmodel.GetCurrentDomainInfo()
