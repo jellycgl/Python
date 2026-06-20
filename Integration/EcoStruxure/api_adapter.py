@@ -1,4 +1,5 @@
 import json
+import time
 import pythonutil
 from netbrain.techspec.common import httputil as requests
 
@@ -9,6 +10,13 @@ from netbrain.techspec.common import httputil as requests
 _cached_access_token = None
 _cached_refresh_token = None
 _cached_endpoint = None
+_cached_username = None
+_cached_password = None
+_token_expiry = 0  # epoch seconds; 0 means unknown / expired
+
+# Refresh the token this many seconds BEFORE it actually expires,
+# so a long-running request never sends an about-to-die token.
+_TOKEN_EXPIRY_SKEW = 60
 
 
 # =========================================================
@@ -52,6 +60,7 @@ def extract_param(param):
 def _oauth_login(endpoint, username, password):
 
     global _cached_access_token, _cached_refresh_token, _cached_endpoint
+    global _cached_username, _cached_password, _token_expiry
 
     token_url = f"{endpoint}/oauth/token"
 
@@ -76,6 +85,11 @@ def _oauth_login(endpoint, username, password):
     _cached_access_token = token_json.get("access_token")
     _cached_refresh_token = token_json.get("refresh_token")
     _cached_endpoint = endpoint
+    # Remember credentials so we can silently re-login when the
+    # refresh token is also expired/invalid.
+    _cached_username = username
+    _cached_password = password
+    _token_expiry = _compute_expiry(token_json)
 
     if not _cached_access_token:
         raise Exception("OAuth response missing access_token")
@@ -87,6 +101,7 @@ def _oauth_login(endpoint, username, password):
 def _oauth_refresh():
 
     global _cached_access_token, _cached_refresh_token, _cached_endpoint
+    global _token_expiry
 
     if not _cached_refresh_token or not _cached_endpoint:
         raise Exception("No refresh token available")
@@ -111,9 +126,50 @@ def _oauth_refresh():
     token_json = response.json()
 
     _cached_access_token = token_json.get("access_token")
+    # Some servers rotate the refresh token on every refresh; keep the new one.
+    if token_json.get("refresh_token"):
+        _cached_refresh_token = token_json.get("refresh_token")
+    _token_expiry = _compute_expiry(token_json)
 
     if not _cached_access_token:
         raise Exception("Refresh did not return access_token")
+
+
+# =========================================================
+# Token Helpers
+# =========================================================
+def _compute_expiry(token_json):
+    """Return the epoch second at which the access token should be
+    considered expired, based on the OAuth `expires_in` field."""
+    expires_in = token_json.get("expires_in")
+    try:
+        expires_in = int(expires_in)
+    except (TypeError, ValueError):
+        # Server didn't tell us; assume a conservative 5 minutes.
+        expires_in = 300
+    return time.time() + expires_in
+
+
+def _ensure_token(endpoint, username, password):
+    """Guarantee a valid (non-expired) access token before a request.
+
+    - Different endpoint or no token  -> full password login.
+    - Token expired / about to expire -> try refresh, fall back to login.
+    """
+    global _cached_access_token
+
+    if _cached_access_token is None or _cached_endpoint != endpoint:
+        _oauth_login(endpoint, username, password)
+        return
+
+    if time.time() < (_token_expiry - _TOKEN_EXPIRY_SKEW):
+        return  # still valid
+
+    # Expired or about to expire: refresh, and if that fails, re-login.
+    try:
+        _oauth_refresh()
+    except Exception:
+        _oauth_login(endpoint, username, password)
 
 
 # =========================================================
@@ -146,11 +202,9 @@ def get_data(param):
 
             return response.text
         else:
-            if (
-                _cached_access_token is None or
-                _cached_endpoint != endpoint
-            ):
-                _oauth_login(endpoint, username, password)
+            # Proactively make sure we have a valid token (login / refresh
+            # based on expires_in) before sending the request.
+            _ensure_token(endpoint, username, password)
 
             headers = {
                 "Authorization": f"Bearer {_cached_access_token}",
@@ -164,9 +218,14 @@ def get_data(param):
                 verify=False,
             )
 
-            # If token expired → refresh once
+            # Safety net: if the server still rejects the token (401),
+            # try a refresh, and if that fails do a full re-login,
+            # then retry the request once.
             if response.status_code == 401:
-                _oauth_refresh()
+                try:
+                    _oauth_refresh()
+                except Exception:
+                    _oauth_login(endpoint, username, password)
 
                 headers["Authorization"] = f"Bearer {_cached_access_token}"
 
