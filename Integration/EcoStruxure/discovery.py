@@ -79,6 +79,84 @@ def _retrieve_log_thread(source_id: str) -> None:
 
 
 # =========================================================
+# Filter: keep only End-System IPs, ignore Network Devices
+# =========================================================
+# Device "mainType" codes that NetBrain treats as End Systems (hosts), as
+# opposed to managed Network Devices. Mirrors is_end_system() in NetBrain's
+# netbrain/path/utils.py.
+_END_SYSTEM_MAIN_TYPES = frozenset(
+    {
+        1004,  # End System
+        1005,  # Unknown End System
+        1027,  # IP Phone
+        1028,  # Call Manager
+        1036,  # Unknown IP
+    }
+)
+
+
+def _get_main_type_by_ip(ip: str):
+    """
+    Resolve the device that owns `ip` in NetBrain and return its mainType.
+
+    Returns the integer mainType, or None when no device is found for the IP
+    (a brand-new host NetBrain doesn't know yet) or the lookup fails.
+    """
+    try:
+        dev_name = sysmodel.GetDeviceNameFromIp(ip)
+        if not dev_name:
+            return None
+        dev_obj = sysmodel.GetDeviceObject(dev_name)
+        if not dev_obj:
+            return None
+        return dev_obj.get("mainType")
+    except Exception as exc:
+        pluginfw.AddLog(
+            f"Device lookup failed for {ip}: {exc}.",
+            pluginfw.WARNING,
+        )
+        return None
+
+
+def _filter_end_system_ips(ips: List[str]) -> List[str]:
+    """
+    Keep only IPs that are confirmed End Systems in NetBrain (decided by the
+    device's mainType). Two groups are excluded:
+      - Network Devices: ignored.
+      - IPs that don't resolve to any device (mainType is None): not
+        discovered, but collected and reported in the final summary log.
+    """
+    discover_ips: List[str] = []
+    network_device_ips: List[str] = []
+    unresolved_ips: List[str] = []
+
+    for ip in ips:
+        main_type = _get_main_type_by_ip(ip)
+        if main_type in _END_SYSTEM_MAIN_TYPES:
+            discover_ips.append(ip)
+        elif main_type is None:
+            unresolved_ips.append(ip)
+        else:
+            network_device_ips.append(ip)
+
+    if network_device_ips:
+        pluginfw.AddLog(
+            f"Ignoring {len(network_device_ips)} IP(s) that are Network "
+            f"Devices in NetBrain: {network_device_ips}",
+            pluginfw.INFO,
+        )
+
+    if unresolved_ips:
+        pluginfw.AddLog(
+            f"Skipping {len(unresolved_ips)} IP(s) that did not resolve to an "
+            f"End System in NetBrain (not discovered): {unresolved_ips}",
+            pluginfw.WARNING,
+        )
+
+    return discover_ips
+
+
+# =========================================================
 # Submit Discover Task
 # =========================================================
 def _submit_discover_task(
@@ -169,6 +247,16 @@ def discover_new_ips(new_ips: List[str]) -> bool:
     if not unique_ips:
         pluginfw.AddLog(
             "No valid IPs after filtering.",
+            pluginfw.INFO,
+        )
+        return True
+
+    # Discover only End Systems; IPs that are already Network Devices in
+    # NetBrain are ignored.
+    unique_ips = _filter_end_system_ips(unique_ips)
+    if not unique_ips:
+        pluginfw.AddLog(
+            "No End-System IPs to discover (all candidates are Network Devices).",
             pluginfw.INFO,
         )
         return True
