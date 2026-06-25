@@ -4,6 +4,12 @@ import pythonutil
 from netbrain.techspec.common import httputil as requests
 
 
+# Bump this whenever the adapter changes so a Test Connection can confirm which
+# version the Front Server is actually running (it caches the module in memory;
+# editing the file on disk is NOT enough -- the worker must reload it).
+_ADAPTER_VERSION = "ensure_token-v2"
+
+
 # =========================================================
 # Global Token Cache (OAuth only)
 # =========================================================
@@ -279,7 +285,8 @@ def _test(param):
             if response.status_code in (200, 401, 403):
                 return json.dumps({
                     "isFailed": False,
-                    "msg": "Endpoint reachable via NetBrain Authenticator."
+                    "msg": f"Endpoint reachable via NetBrain Authenticator. "
+                           f"[adapter: {_ADAPTER_VERSION}]"
                 })
 
             return json.dumps({
@@ -290,7 +297,8 @@ def _test(param):
             _oauth_login(endpoint, username, password)
             return json.dumps({
                 "isFailed": False,
-                "msg": "OAuth authentication successful."
+                "msg": f"OAuth authentication successful. "
+                       f"[adapter: {_ADAPTER_VERSION}]"
             })
     except Exception as e:
         return json.dumps({
