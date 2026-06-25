@@ -79,20 +79,38 @@ def _retrieve_log_thread(source_id: str) -> None:
 
 
 # =========================================================
-# Filter: keep only End-System IPs, ignore Network Devices
+# Filter: discover only un-identified End-System shells
 # =========================================================
-# Device "mainType" codes that NetBrain treats as End Systems (hosts), as
-# opposed to managed Network Devices. Mirrors is_end_system() in NetBrain's
-# netbrain/path/utils.py.
-_END_SYSTEM_MAIN_TYPES = frozenset(
+# An "End System" in NetBrain is a permanent device category (servers, PDUs,
+# UPS, IP phones, ...), NOT a "not yet discovered" marker. A fully discovered
+# device can still be an End System -- e.g. an APC PDU/UPS comes in as
+# mainType 1004, vendor "APC". So mainType alone cannot tell "needs discovery"
+# from "already discovered".
+#
+# These mainType codes are hosts NetBrain has SEEN (via a neighbor's
+# ARP/MAC/route table) but has NOT yet identified. They are the shells worth
+# (re)discovering so NetBrain can promote them to a concrete device.
+_DISCOVERABLE_MAIN_TYPES = frozenset(
     {
-        1004,  # End System
         1005,  # Unknown End System
-        1027,  # IP Phone
-        1028,  # Call Manager
         1036,  # Unknown IP
     }
 )
+
+# Already-identified End Systems: a concrete device type is assigned, so these
+# have already been discovered and must NOT be discovered again. APC PDU/UPS
+# lands here as 1004 (vendor "APC"), which is why it kept being re-discovered
+# before this distinction was made.
+_IDENTIFIED_END_SYSTEM_MAIN_TYPES = frozenset(
+    {
+        1004,  # End System (e.g. APC PDU/UPS, servers)
+        1027,  # IP Phone
+        1028,  # Call Manager
+    }
+)
+
+# Kept for callers that still need the full End-System set (any of the above).
+_END_SYSTEM_MAIN_TYPES = _DISCOVERABLE_MAIN_TYPES | _IDENTIFIED_END_SYSTEM_MAIN_TYPES
 
 
 def _get_main_type_by_ip(ip: str):
@@ -120,24 +138,37 @@ def _get_main_type_by_ip(ip: str):
 
 def _filter_end_system_ips(ips: List[str]) -> List[str]:
     """
-    Keep only IPs that are confirmed End Systems in NetBrain (decided by the
-    device's mainType). Two groups are excluded:
+    Keep only IPs worth discovering: un-identified End-System shells (decided
+    by the device's mainType). Three groups are excluded:
+      - Already-identified End Systems (e.g. APC PDU at mainType 1004): already
+        discovered, so NOT re-discovered.
       - Network Devices: ignored.
       - IPs that don't resolve to any device (mainType is None): not
         discovered, but collected and reported in the final summary log.
     """
     discover_ips: List[str] = []
+    already_discovered_ips: List[str] = []
     network_device_ips: List[str] = []
     unresolved_ips: List[str] = []
 
     for ip in ips:
         main_type = _get_main_type_by_ip(ip)
-        if main_type in _END_SYSTEM_MAIN_TYPES:
+        if main_type in _DISCOVERABLE_MAIN_TYPES:
             discover_ips.append(ip)
+        elif main_type in _IDENTIFIED_END_SYSTEM_MAIN_TYPES:
+            already_discovered_ips.append(ip)
         elif main_type is None:
             unresolved_ips.append(ip)
         else:
             network_device_ips.append(ip)
+
+    if already_discovered_ips:
+        pluginfw.AddLog(
+            f"Skipping {len(already_discovered_ips)} IP(s) already discovered "
+            f"as identified End Systems (e.g. APC); not re-discovering: "
+            f"{already_discovered_ips}",
+            pluginfw.INFO,
+        )
 
     if network_device_ips:
         pluginfw.AddLog(

@@ -1,7 +1,7 @@
 import json
 from typing import Dict, List, Optional
 from .api_server import ApiServer
-from .discovery import discover_new_ips
+from .discovery import discover_new_ips, _DISCOVERABLE_MAIN_TYPES
 
 
 from netbrain.utils import nbjson
@@ -39,7 +39,11 @@ def update_device_loc(device: dict) -> Dict[str, str]:
             "status": "success" | "not_found" | "failed" | "skipped",
             "device": "hostname",
             "reason": "detailed reason",
-            "ip": "management IP" (only meaningful for not_found),
+            "ip": "management IP" (set for not_found and undiscovered shells),
+            "is_end_system": True when the matched NetBrain device is an
+                             un-identified End-System shell (candidate for
+                             re-discovery); already-identified End Systems such
+                             as APC PDUs (mainType 1004) are NOT flagged.
         }
     """
 
@@ -49,6 +53,7 @@ def update_device_loc(device: dict) -> Dict[str, str]:
             "device": "",
             "reason": "Empty device data",
             "ip": "",
+            "is_end_system": False,
         }
 
     device_name = device.get("hostname")
@@ -58,6 +63,7 @@ def update_device_loc(device: dict) -> Dict[str, str]:
             "device": "",
             "reason": "Missing hostname",
             "ip": "",
+            "is_end_system": False,
         }
 
     nb_device = datamodel.GetDeviceObject(device_name)
@@ -67,7 +73,16 @@ def update_device_loc(device: dict) -> Dict[str, str]:
             "device": device_name,
             "reason": "Device not found in NetBrain",
             "ip": _extract_device_ip(device),
+            "is_end_system": False,
         }
+
+    # An existing device that is still an un-identified End-System shell should
+    # be re-discovered (to promote it to a fully managed device), on top of its
+    # location update. Already-identified End Systems (e.g. an APC PDU at
+    # mainType 1004) are NOT re-discovered -- they are already discovered.
+    # Flag the shell and carry its management IP for the discovery task.
+    is_end_system = nb_device.get("mainType") in _DISCOVERABLE_MAIN_TYPES
+    end_system_ip = _extract_device_ip(device) if is_end_system else ""
 
     new_location = device.get("location", "")
     current_location = nb_device.get("loc", "")
@@ -77,7 +92,8 @@ def update_device_loc(device: dict) -> Dict[str, str]:
             "status": "skipped",
             "device": device_name,
             "reason": "Location empty in API data",
-            "ip": "",
+            "ip": end_system_ip,
+            "is_end_system": is_end_system,
         }
 
     if new_location == current_location:
@@ -85,7 +101,8 @@ def update_device_loc(device: dict) -> Dict[str, str]:
             "status": "skipped",
             "device": device_name,
             "reason": "Location unchanged",
-            "ip": "",
+            "ip": end_system_ip,
+            "is_end_system": is_end_system,
         }
 
     try:
@@ -100,14 +117,16 @@ def update_device_loc(device: dict) -> Dict[str, str]:
                 "status": "success",
                 "device": device_name,
                 "reason": "Location updated",
-                "ip": "",
+                "ip": end_system_ip,
+                "is_end_system": is_end_system,
             }
 
         return {
             "status": "failed",
             "device": device_name,
             "reason": "SetDeviceProperty returned False",
-            "ip": "",
+            "ip": end_system_ip,
+            "is_end_system": is_end_system,
         }
 
     except Exception as exc:
@@ -115,7 +134,8 @@ def update_device_loc(device: dict) -> Dict[str, str]:
             "status": "failed",
             "device": device_name,
             "reason": f"Exception: {exc}",
-            "ip": "",
+            "ip": end_system_ip,
+            "is_end_system": is_end_system,
         }
 
 
@@ -130,9 +150,10 @@ def handle_device_api_request(
     """
     Process a 'devices' API request and update locations.
 
-    Returns the management IPs of devices that were not found in NetBrain
-    (candidates for discovery). Returns an empty list when there are none
-    or when the request itself fails.
+    Returns the management IPs that are candidates for discovery: devices not
+    found in NetBrain, plus existing End Systems (which get re-discovered to be
+    promoted to fully managed devices). Returns an empty list when there are
+    none or when the request itself fails.
     """
 
     response = api_server.forward_request_to_fs(
@@ -207,6 +228,7 @@ def handle_device_api_request(
 
     not_found_ips: List[str] = []
     not_found_missing_ip: List[str] = []
+    end_system_ips: List[str] = []
 
     # =============================
     # Process Devices
@@ -226,6 +248,12 @@ def handle_device_api_request(
                 not_found_ips.append(ip)
             else:
                 not_found_missing_ip.append(device_name)
+        elif result.get("is_end_system"):
+            # Existing End System: its location was already handled above;
+            # also queue it for re-discovery so NetBrain can upgrade it.
+            ip = result.get("ip", "")
+            if ip:
+                end_system_ips.append(ip)
 
     # =============================
     # Print Summary Report
@@ -267,9 +295,16 @@ def handle_device_api_request(
             pluginfw.WARNING,
         )
 
+    if end_system_ips:
+        pluginfw.AddLog(
+            f"Existing End System(s) queued for re-discovery "
+            f"({len(end_system_ips)}): {end_system_ips}",
+            pluginfw.INFO,
+        )
+
     pluginfw.AddLog("=========================================", pluginfw.INFO)
 
-    return not_found_ips
+    return not_found_ips + end_system_ips
 
 
 # =========================================================
