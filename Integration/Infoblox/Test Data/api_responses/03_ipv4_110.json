@@ -1,0 +1,20 @@
+[
+    {
+        "ip_address": "10.0.110.1",
+        "names": ["router-core-02.corp.local"],
+        "mac_address": "aa:bb:cc:11:33:01",
+        "status": "USED",
+        "types": ["A"],
+        "usage": ["DNS"],
+        "network": "10.0.110.0/24"
+    },
+    {
+        "ip_address": "10.0.110.2",
+        "names": ["switch-core-02.corp.local"],
+        "mac_address": "aa:bb:cc:11:33:02",
+        "status": "USED",
+        "types": ["A"],
+        "usage": ["DNS"],
+        "network": "10.0.110.0/24"
+    }
+]

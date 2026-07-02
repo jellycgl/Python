@@ -1,0 +1,21 @@
+[
+    {
+        "network": "10.0.104.0/24",
+        "network_view": "default",
+        "extattrs": {"Zone": {"value": "CORE"}}
+    },
+    {
+        "network": "10.0.110.0/24",
+        "network_view": "default",
+        "extattrs": {}
+    },
+    {
+        "network": "192.168.1.0/24",
+        "network_view": "default",
+        "extattrs": {"Zone": {"value": "EDGE"}}
+    },
+    {
+        "network": "172.16.0.0/24",
+        "network_view": "default"
+    }
+]

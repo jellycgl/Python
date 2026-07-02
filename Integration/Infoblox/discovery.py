@@ -106,7 +106,6 @@ def _submit_discover_task(
 ) -> dict:
 
     task_id = pluginfw.GetTaskId()
-    #task_id = "d86e9b34-da39-44a7-8635-a5a98bcc67a6"
     op_user = pluginfw.GetOpUserName()
     op_user_id = pluginfw.GetOpUserId()
     domain_info = sysmodel.GetCurrentDomainInfo()
@@ -172,12 +171,15 @@ def _submit_discover_task(
 # =========================================================
 # Public Entry: Discover New IPs
 # =========================================================
-def discover_new_ips(new_ips: List[str]) -> bool:
+def discover_new_ips(new_ips: List[str], dry_run: bool = False) -> bool:
     """
     Trigger an on-demand discovery task for the given hosts.
 
     `new_ips` may contain single IP addresses and/or subnet CIDRs
     (discovery-by-network); both are valid "hostips" values.
+
+    When `dry_run=True` the task is NOT submitted; the target list is
+    logged instead so the caller can verify the inputs look correct.
     """
 
     global _log_thread_stopped
@@ -194,6 +196,14 @@ def discover_new_ips(new_ips: List[str]) -> bool:
     if not unique_ips:
         pluginfw.AddLog(
             "No valid targets after filtering.",
+            pluginfw.INFO,
+        )
+        return True
+
+    if dry_run:
+        pluginfw.AddLog(
+            f"[DRY RUN] Would submit discovery task with "
+            f"{_describe_targets(unique_ips)}: {unique_ips}",
             pluginfw.INFO,
         )
         return True

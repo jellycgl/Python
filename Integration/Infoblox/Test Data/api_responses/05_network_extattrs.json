@@ -1,0 +1,38 @@
+[
+    {
+        "network": "10.0.104.0/24",
+        "network_view": "default",
+        "comment": "Core datacenter subnet A",
+        "extattrs": {
+            "Zone":     {"value": "CORE"},
+            "Building": {"value": "HQ"}
+        }
+    },
+    {
+        "network": "10.0.110.0/24",
+        "network_view": "default",
+        "comment": "Core datacenter subnet B",
+        "extattrs": {
+            "Zone":     {"value": "CORE"},
+            "Building": {"value": "HQ"}
+        }
+    },
+    {
+        "network": "192.168.1.0/24",
+        "network_view": "default",
+        "comment": "Edge DMZ subnet",
+        "extattrs": {
+            "Zone":     {"value": "EDGE"},
+            "Building": {"value": "Branch-01"}
+        }
+    },
+    {
+        "network": "172.16.0.0/24",
+        "network_view": "default",
+        "comment": "Edge WAN subnet",
+        "extattrs": {
+            "Zone":     {"value": "EDGE"},
+            "Building": {"value": "Branch-02"}
+        }
+    }
+]

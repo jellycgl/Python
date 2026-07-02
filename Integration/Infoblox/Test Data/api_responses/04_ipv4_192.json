@@ -1,0 +1,20 @@
+[
+    {
+        "ip_address": "192.168.1.1",
+        "names": ["fw-edge-01.corp.local"],
+        "mac_address": "aa:bb:cc:44:55:01",
+        "status": "USED",
+        "types": ["A"],
+        "usage": ["DNS"],
+        "network": "192.168.1.0/24"
+    },
+    {
+        "ip_address": "192.168.1.254",
+        "names": ["gw-edge-01.corp.local"],
+        "mac_address": "aa:bb:cc:44:55:fe",
+        "status": "USED",
+        "types": ["A"],
+        "usage": ["DNS"],
+        "network": "192.168.1.0/24"
+    }
+]

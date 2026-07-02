@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Infoblox Integration — Test Report</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+         background: #f4f6f9; color: #222; font-size: 14px; }
+  header { background: #1a2b45; color: #fff; padding: 28px 40px 24px; }
+  header h1 { font-size: 22px; font-weight: 600; letter-spacing: .3px; }
+  header p  { color: #94a3b8; margin-top: 4px; font-size: 13px; }
+  .summary { display: flex; gap: 16px; margin: 20px 40px; }
+  .stat { background: #fff; border-radius: 8px; padding: 16px 24px;
+           box-shadow: 0 1px 3px rgba(0,0,0,.08); min-width: 120px; text-align: center; }
+  .stat .num { font-size: 32px; font-weight: 700; }
+  .stat .lbl { font-size: 12px; color: #64748b; margin-top: 2px; }
+  .stat.total .num  { color: #1a2b45; }
+  .stat.spassed .num { color: #16a34a; }
+  .stat.sfailed .num { color: #dc2626; }
+  .summary-pass { /* placeholder */ }
+  main { padding: 0 40px 40px; }
+  section.group { margin-bottom: 24px; }
+  .group-header { display: flex; align-items: center; gap: 12px;
+                   background: #fff; border-radius: 8px 8px 0 0;
+                   padding: 14px 20px; border-left: 4px solid #94a3b8;
+                   box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+  .group-header.all-pass  { border-left-color: #16a34a; }
+  .group-header.has-fail  { border-left-color: #dc2626; }
+  .group-title { font-weight: 700; font-size: 15px; }
+  .group-sub   { color: #64748b; font-size: 12px; }
+  .group-score { margin-left: auto; font-weight: 600; color: #1a2b45; }
+  .tc { background: #fff; border-top: 1px solid #e2e8f0; }
+  .tc:last-child { border-radius: 0 0 8px 8px; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+  .tc-header { display: flex; align-items: center; gap: 10px;
+                padding: 10px 20px; cursor: default; }
+  .tc-id   { font-family: monospace; font-size: 12px; color: #64748b;
+              background: #f1f5f9; padding: 2px 7px; border-radius: 4px; }
+  .tc-desc { font-size: 13px; }
+  .tc-body { padding: 0 20px 14px 20px; }
+  .badge { font-size: 11px; font-weight: 700; padding: 2px 8px;
+            border-radius: 10px; letter-spacing: .4px; }
+  .badge.pass { background: #dcfce7; color: #15803d; }
+  .badge.fail { background: #fee2e2; color: #b91c1c; }
+  table.assertions { border-collapse: collapse; width: 100%; margin-top: 6px; }
+  table.assertions td { padding: 4px 8px; vertical-align: top; font-size: 13px; }
+  tr.ok .mark { color: #16a34a; font-size: 15px; width: 20px; }
+  tr.ko .mark { color: #dc2626; font-size: 15px; width: 20px; }
+  .diff { color: #64748b; font-size: 12px; }
+  .diff code { background: #f1f5f9; padding: 1px 4px; border-radius: 3px; }
+  .nb-section { margin-top: 12px; border-top: 1px dashed #cbd5e1; padding-top: 10px; }
+  .nb-section strong { font-size: 12px; color: #475569; }
+  .nb-iface { font-family: monospace; font-size: 12px; color: #1e40af;
+               background: #eff6ff; padding: 3px 8px; border-radius: 4px;
+               margin: 8px 0 4px; display: inline-block; }
+  pre.json { background: #1e293b; color: #e2e8f0; padding: 12px 16px;
+              border-radius: 6px; font-size: 12px; line-height: 1.6;
+              overflow-x: auto; white-space: pre; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Infoblox Integration &mdash; Test Report</h1>
+  <p>Date: 2026-07-01 &nbsp;&bull;&nbsp; Scope: Discovery flow &amp; Dynamic Device Group flow</p>
+</header>
+
+<div class="summary">
+  <div class="stat total">  <div class="num">27</div>  <div class="lbl">Total</div>  </div>
+  <div class="stat spassed"><div class="num">27</div> <div class="lbl">Passed</div> </div>
+  <div class="stat sfailed"><div class="num">0</div> <div class="lbl">Failed</div> </div>
+</div>
+
+<main>
+
+    <section class="group">
+      <div class="group-header all-pass">
+        <span class="group-title">Parsing Tests</span>
+        <span class="group-sub">infoblox.py — pure functions</span>
+        <span class="group-score">10/10</span>
+      </div>
+      
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-P-01</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">extract_ips: all IPs from ipv4address response, no filter</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>All 3 IPs extracted</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-P-02</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">extract_ips: result_filter status=USED keeps only USED records</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>3 USED IPs returned; 2 UNUSED filtered</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>UNUSED IPs 10.0.104.100 and .101 absent</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-P-03</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">extract_ips: ip_keys=[&quot;network&quot;] collects subnet CIDRs</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>All 3 subnet CIDRs extracted</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-P-04</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">extract_ips: empty API response returns empty list</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>Empty list for empty response</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-P-05</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">extract_ips: test_limit=2 truncates to first 2 records</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>2 IPs returned</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>Only first 2 records processed</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-P-06</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">build_group_mapping: group by Zone -&gt; CORE and EDGE groups</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>Two groups: CORE and EDGE</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>CORE has 2 subnets</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>EDGE has 2 subnets</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-P-07</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">build_group_mapping: group by Building -&gt; HQ / Branch-01 / Branch-02</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>Three building groups</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>HQ has 2 subnets</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>Branch-01 has 1 subnet</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>Branch-02 has 1 subnet</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-P-08</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">build_group_mapping: result_filter network_view=default drops dmz records</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>Only CORE group (dmz EDGE records filtered out)</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>CORE contains the 2 default-view subnets only</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-P-09</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">build_group_mapping: records missing Zone extattr are skipped</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>Groups only for records that have Zone</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>CORE has 1 subnet (10.0.110.0/24 skipped: extattrs={} )</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>EDGE has 1 subnet (172.16.0.0/24 skipped: no extattrs key)</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-P-10</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">build_group_mapping: duplicate subnets within same group are deduplicated</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>Duplicate 10.0.104.0/24 deduplicated; CORE has 2 unique subnets</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+    </section>
+    <section class="group">
+      <div class="group-header all-pass">
+        <span class="group-title">Filter Tests</span>
+        <span class="group-sub">infoblox.py</span>
+        <span class="group-score">4/4</span>
+      </div>
+      
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-F-01</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">match_filters: empty filter always returns True</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>Empty filter -&gt; True regardless of record content</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-F-02</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">match_filters: flat key match and mismatch</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>USED matches USED</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>USED does not match UNUSED</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-F-03</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">match_filters: expected value as list means OR within that field</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>dmz is in [default, dmz]</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>dmz is NOT in [default]</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-F-04</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">match_filters: multiple conditions are AND-ed</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>Both conditions satisfied -&gt; True</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>First OK, second fails -&gt; False</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+    </section>
+    <section class="group">
+      <div class="group-header all-pass">
+        <span class="group-title">Dynamic Group Tests</span>
+        <span class="group-sub">dynamic_group.py — condition building</span>
+        <span class="group-score">5/5</span>
+      </div>
+      
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-D-01</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">_build_condition: single subnet -&gt; expression=&#x27;A&#x27;</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>Single condition letter is A</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>Exactly 1 condition</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>Condition fields correct</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-D-02</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">_build_condition: three subnets -&gt; expression=&#x27;A or B or C&#x27;</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>Three conditions OR-combined</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>Subnet order preserved in conditions</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-D-03</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">upsert_dynamic_groups: 2-group mapping -&gt; 2 AddOrUpdateDeviceGroup calls</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>Exactly 2 calls</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>Correct paths for both groups</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>CORE call found</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>CORE filter expression is &#x27;A or B&#x27; (2 subnets)</td><td></td></tr></tbody>
+            </table>
+            <div class="nb-section"><strong>NetBrain Interface Calls</strong><div class="nb-iface">datamodel.AddOrUpdateDeviceGroup</div><pre class="json">{
+  &quot;path&quot;: &quot;Shared Device Groups/CORE&quot;,
+  &quot;condition&quot;: {
+    &quot;Filter&quot;: {
+      &quot;expression&quot;: &quot;A or B&quot;,
+      &quot;conditions&quot;: [
+        {
+          &quot;schema&quot;: &quot;mgmtIP&quot;,
+          &quot;operator&quot;: 0,
+          &quot;expression&quot;: &quot;10.0.104.0/24&quot;
+        },
+        {
+          &quot;schema&quot;: &quot;mgmtIP&quot;,
+          &quot;operator&quot;: 0,
+          &quot;expression&quot;: &quot;10.0.110.0/24&quot;
+        }
+      ]
+    },
+    &quot;RangeOption&quot;: 0,
+    &quot;DeviceGroupRange&quot;: [],
+    &quot;SiteRange&quot;: []
+  },
+  &quot;name&quot;: &quot;CORE&quot;
+}</pre><div class="nb-iface">datamodel.AddOrUpdateDeviceGroup</div><pre class="json">{
+  &quot;path&quot;: &quot;Shared Device Groups/EDGE&quot;,
+  &quot;condition&quot;: {
+    &quot;Filter&quot;: {
+      &quot;expression&quot;: &quot;A&quot;,
+      &quot;conditions&quot;: [
+        {
+          &quot;schema&quot;: &quot;mgmtIP&quot;,
+          &quot;operator&quot;: 0,
+          &quot;expression&quot;: &quot;192.168.1.0/24&quot;
+        }
+      ]
+    },
+    &quot;RangeOption&quot;: 0,
+    &quot;DeviceGroupRange&quot;: [],
+    &quot;SiteRange&quot;: []
+  },
+  &quot;name&quot;: &quot;EDGE&quot;
+}</pre></div>
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-D-04</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">upsert_dynamic_groups: empty mapping -&gt; no NetBrain calls</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>0 calls for empty mapping</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-D-05</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">upsert_dynamic_groups: group with empty subnet list is skipped</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>Only 1 call (EMPTY group skipped)</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+    </section>
+    <section class="group">
+      <div class="group-header all-pass">
+        <span class="group-title">Integration Tests</span>
+        <span class="group-sub">full Discovery &amp; Device Group flow</span>
+        <span class="group-score">8/8</span>
+      </div>
+      
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-I-01</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">Discovery by ip_address: specific IPs provided in request</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>2 IPs ready for discovery</td><td></td></tr></tbody>
+            </table>
+            <div class="nb-section"><strong>NetBrain Interface Calls</strong><div class="nb-iface">discover_new_ips -&gt; SubmitChildTask</div><pre class="json">{
+  &quot;hostips&quot;: [
+    &quot;10.0.104.1&quot;,
+    &quot;10.0.104.2&quot;
+  ],
+  &quot;note&quot;: &quot;task_param[&#x27;discoverOption&#x27;][&#x27;hostips&#x27;] = this list&quot;
+}</pre></div>
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-I-02</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">Discovery by ip_address: no IPs given -&gt; enumerate subnets -&gt; query each</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>Step 1: 3 subnets enumerated</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>Step 2: 7 IPs collected (3 + 2 + 2)</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>IPs from all 3 subnets present</td><td></td></tr></tbody>
+            </table>
+            <div class="nb-section"><strong>NetBrain Interface Calls</strong><div class="nb-iface">discover_new_ips -&gt; SubmitChildTask</div><pre class="json">{
+  &quot;hostips&quot;: [
+    &quot;10.0.104.1&quot;,
+    &quot;10.0.104.2&quot;,
+    &quot;10.0.104.100&quot;,
+    &quot;10.0.110.1&quot;,
+    &quot;10.0.110.2&quot;,
+    &quot;192.168.1.1&quot;,
+    &quot;192.168.1.254&quot;
+  ],
+  &quot;note&quot;: &quot;task_param[&#x27;discoverOption&#x27;][&#x27;hostips&#x27;] = all 7 IPs from 3 subnets&quot;
+}</pre></div>
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-I-03</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">Discovery by network: specific subnets provided in request</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>2 subnets ready</td><td></td></tr></tbody>
+            </table>
+            <div class="nb-section"><strong>NetBrain Interface Calls</strong><div class="nb-iface">discover_new_ips -&gt; SubmitChildTask</div><pre class="json">{
+  &quot;hostips&quot;: [
+    &quot;10.0.104.0/24&quot;,
+    &quot;10.0.110.0/24&quot;
+  ],
+  &quot;note&quot;: &quot;Subnet CIDRs accepted in hostips; NetBrain discovers all devices within each CIDR&quot;
+}</pre></div>
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-I-04</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">Discovery by network: no subnets given -&gt; enumerate all from Infoblox</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>3 subnets enumerated from /network</td><td></td></tr></tbody>
+            </table>
+            <div class="nb-section"><strong>NetBrain Interface Calls</strong><div class="nb-iface">discover_new_ips -&gt; SubmitChildTask</div><pre class="json">{
+  &quot;hostips&quot;: [
+    &quot;10.0.104.0/24&quot;,
+    &quot;10.0.110.0/24&quot;,
+    &quot;192.168.1.0/24&quot;
+  ],
+  &quot;note&quot;: &quot;All subnets from /network enumeration used as hostips&quot;
+}</pre></div>
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-I-05</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">Discovery by ip_address: result_filter status=USED excludes UNUSED IPs</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>3 USED IPs extracted (2 UNUSED excluded)</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>UNUSED IPs not in discovery list</td><td></td></tr></tbody>
+            </table>
+            <div class="nb-section"><strong>NetBrain Interface Calls</strong><div class="nb-iface">discover_new_ips -&gt; SubmitChildTask</div><pre class="json">{
+  &quot;hostips&quot;: [
+    &quot;10.0.104.1&quot;,
+    &quot;10.0.104.2&quot;,
+    &quot;10.0.104.200&quot;
+  ],
+  &quot;note&quot;: &quot;Only USED IPs forwarded; 2 UNUSED addresses dropped before discovery&quot;
+}</pre></div>
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-I-06</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">Dynamic Group full flow: group by Zone -&gt; 2 Device Groups in NetBrain</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>Mapping: CORE and EDGE</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>2 AddOrUpdateDeviceGroup calls</td><td></td></tr></tbody>
+            </table>
+            <div class="nb-section"><strong>NetBrain Interface Calls</strong><div class="nb-iface">datamodel.AddOrUpdateDeviceGroup</div><pre class="json">{
+  &quot;path&quot;: &quot;Shared Device Groups/CORE&quot;,
+  &quot;condition&quot;: {
+    &quot;Filter&quot;: {
+      &quot;expression&quot;: &quot;A or B&quot;,
+      &quot;conditions&quot;: [
+        {
+          &quot;schema&quot;: &quot;mgmtIP&quot;,
+          &quot;operator&quot;: 0,
+          &quot;expression&quot;: &quot;10.0.104.0/24&quot;
+        },
+        {
+          &quot;schema&quot;: &quot;mgmtIP&quot;,
+          &quot;operator&quot;: 0,
+          &quot;expression&quot;: &quot;10.0.110.0/24&quot;
+        }
+      ]
+    },
+    &quot;RangeOption&quot;: 0,
+    &quot;DeviceGroupRange&quot;: [],
+    &quot;SiteRange&quot;: []
+  },
+  &quot;name&quot;: &quot;CORE&quot;
+}</pre><div class="nb-iface">datamodel.AddOrUpdateDeviceGroup</div><pre class="json">{
+  &quot;path&quot;: &quot;Shared Device Groups/EDGE&quot;,
+  &quot;condition&quot;: {
+    &quot;Filter&quot;: {
+      &quot;expression&quot;: &quot;A or B&quot;,
+      &quot;conditions&quot;: [
+        {
+          &quot;schema&quot;: &quot;mgmtIP&quot;,
+          &quot;operator&quot;: 0,
+          &quot;expression&quot;: &quot;192.168.1.0/24&quot;
+        },
+        {
+          &quot;schema&quot;: &quot;mgmtIP&quot;,
+          &quot;operator&quot;: 0,
+          &quot;expression&quot;: &quot;172.16.0.0/24&quot;
+        }
+      ]
+    },
+    &quot;RangeOption&quot;: 0,
+    &quot;DeviceGroupRange&quot;: [],
+    &quot;SiteRange&quot;: []
+  },
+  &quot;name&quot;: &quot;EDGE&quot;
+}</pre></div>
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-I-07</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">Dynamic Group: result_filter network_view=default -&gt; only CORE group created</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>Only CORE in mapping after dmz records filtered</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>Only 1 AddOrUpdateDeviceGroup call (no EDGE)</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>Correct path</td><td></td></tr></tbody>
+            </table>
+            <div class="nb-section"><strong>NetBrain Interface Calls</strong><div class="nb-iface">datamodel.AddOrUpdateDeviceGroup</div><pre class="json">{
+  &quot;path&quot;: &quot;Shared Device Groups/CORE&quot;,
+  &quot;condition&quot;: {
+    &quot;Filter&quot;: {
+      &quot;expression&quot;: &quot;A or B&quot;,
+      &quot;conditions&quot;: [
+        {
+          &quot;schema&quot;: &quot;mgmtIP&quot;,
+          &quot;operator&quot;: 0,
+          &quot;expression&quot;: &quot;10.0.104.0/24&quot;
+        },
+        {
+          &quot;schema&quot;: &quot;mgmtIP&quot;,
+          &quot;operator&quot;: 0,
+          &quot;expression&quot;: &quot;10.0.110.0/24&quot;
+        }
+      ]
+    },
+    &quot;RangeOption&quot;: 0,
+    &quot;DeviceGroupRange&quot;: [],
+    &quot;SiteRange&quot;: []
+  },
+  &quot;name&quot;: &quot;CORE&quot;
+}</pre></div>
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-I-08</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">Dynamic Group: missing group_by in request -&gt; empty mapping, no NetBrain calls</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>Empty mapping returned</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>No NetBrain calls when mapping is empty</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+    </section>
+</main>
+</body>
+</html>

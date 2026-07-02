@@ -95,7 +95,7 @@ def _fetch_and_collect(
 # =========================================================
 # Purpose 1: Discovery
 # =========================================================
-def _process_discovery(api_server, request, test_limit):
+def _process_discovery(api_server, request, test_limit, dry_run=False):
     """
     Resolve the values to feed NetBrain discovery for one discovery request.
 
@@ -182,7 +182,7 @@ def _process_discovery(api_server, request, test_limit):
             f"value(s).",
             pluginfw.INFO,
         )
-        discover_new_ips(discovery_values)
+        discover_new_ips(discovery_values, dry_run=dry_run)
     else:
         pluginfw.AddLog(
             "No IPs/subnets to discover for this request.",
@@ -193,7 +193,7 @@ def _process_discovery(api_server, request, test_limit):
 # =========================================================
 # Purpose 2: Dynamic Group
 # =========================================================
-def _process_dynamic_group(api_server, request, test_limit):
+def _process_dynamic_group(api_server, request, test_limit, dry_run=False):
     """
     Build Dynamic Groups from a /network (+extattrs) response.
 
@@ -231,10 +231,24 @@ def _process_dynamic_group(api_server, request, test_limit):
         )
         return
 
-    # Persist the name -> subnet-list mapping (customer DB), then upsert the
-    # Dynamic Group objects (reserved until the upsert endpoint is available).
-    store_group_mapping(group_by, mapping)
-    upsert_dynamic_groups(mapping)
+    # Persist the name -> subnet-list mapping (customer DB), then create/update
+    # the NetBrain Dynamic Device Groups themselves. How a grouped value maps to
+    # a device-group filter is configured in the request -- "device_group_parent"
+    # (folder), "device_group_schema" (filter field, e.g. "mgmtIP") and
+    # "device_group_operator" (DySearchOperator). Each falls back to the
+    # dynamic_group module default when omitted.
+    if dry_run:
+        store_group_mapping(group_by, mapping)
+
+    upsert_kwargs = {}
+    if request.get("device_group_parent"):
+        upsert_kwargs["parent_path"] = request["device_group_parent"]
+    if request.get("device_group_schema"):
+        upsert_kwargs["schema"] = request["device_group_schema"]
+    if request.get("device_group_operator") is not None:
+        upsert_kwargs["operator"] = request["device_group_operator"]
+
+    upsert_dynamic_groups(mapping, dry_run=dry_run, **upsert_kwargs)
 
 
 # =========================================================
@@ -290,6 +304,7 @@ def run(input_data: str) -> bool:
         return False
 
     test_limit = plugin_input.get("testLimit")
+    dry_run    = bool(plugin_input.get("dryRun"))
 
     # -------------------------
     # Initialize API Server
@@ -317,9 +332,9 @@ def run(input_data: str) -> bool:
         purpose = (request.get("purpose") or PURPOSE_DISCOVERY).strip().lower()
 
         if purpose == PURPOSE_DYNAMIC_GROUP:
-            _process_dynamic_group(api_server, request, test_limit)
+            _process_dynamic_group(api_server, request, test_limit, dry_run=dry_run)
         elif purpose == PURPOSE_DISCOVERY:
-            _process_discovery(api_server, request, test_limit)
+            _process_discovery(api_server, request, test_limit, dry_run=dry_run)
         else:
             pluginfw.AddLog(
                 f"Unknown request purpose '{purpose}'; skipping.",

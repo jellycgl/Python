@@ -1,0 +1,7 @@
+[
+    {"ip_address": "10.0.104.1",   "status": "USED",   "network": "10.0.104.0/24"},
+    {"ip_address": "10.0.104.2",   "status": "USED",   "network": "10.0.104.0/24"},
+    {"ip_address": "10.0.104.100", "status": "UNUSED", "network": "10.0.104.0/24"},
+    {"ip_address": "10.0.104.101", "status": "UNUSED", "network": "10.0.104.0/24"},
+    {"ip_address": "10.0.104.200", "status": "USED",   "network": "10.0.104.0/24"}
+]

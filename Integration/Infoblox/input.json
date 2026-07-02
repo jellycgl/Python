@@ -23,8 +23,12 @@
             "_return_fields": ["network", "network_view", "comment", "extattrs"],
             "group_by": "Zone",
             "group_value_field": "network",
+            "device_group_parent": "Shared Device Groups",
+            "device_group_schema": "mgmtIP",
+            "device_group_operator": 0,
             "result_filter": []
         }
     ],
-    "testLimit": 1
+    "testLimit": 1,
+    "dryRun": false
 }
