@@ -1,0 +1,30 @@
+{
+    "_id": "7a3b4e21-f5d9-4831-8cb2-394e310265d7",
+    "author": "NetBrain",
+    "description": {
+        "content": "Purpose:\nFetches subnet and IP address usage data from Infoblox IPAM, compares it against NetBrain's discovered live network data, and publishes a CSV reconciliation report.\n\nReconciliation rules:\n1. If an IP or subnet is marked \"Used\" in Infoblox but NetBrain has not discovered it, the report flags it with the recommended action \"Discover IP in NetBrain\".\n2. If NetBrain has discovered a device IP that Infoblox has no record of, the report flags it with the recommended action \"Register IP in Infoblox\".\n3. If an IP is consistent on both sides, the recommended action is \"No action\".\n\nPrerequisite:\nCreate an External API Server in NetBrain (System > Integration > API Servers), using the built-in \"Infoblox API Adapter\", pointing to the Infoblox Grid Manager (e.g. https://gm.example.com) with a WAPI user/password that has read access to the network and ipv4address WAPI objects. Its name must match the infoblox.api_server_name input value below (default \"Infoblox API Server\").\n\nInput parameters:\n- infoblox.api_server_name: Name of the External API Server registered in NetBrain that points to the \"Infoblox API Adapter\". Default \"Infoblox API Server\".\n- infoblox.wapi_version: Infoblox WAPI version, e.g. \"v2.12\".\n- infoblox.network_view: Optional Infoblox network view filter, e.g. \"default\". Leave empty for all views.\n- infoblox.subnets: Optional explicit list of subnet CIDR strings to reconcile, e.g. [\"10.0.104.0/24\"]. Leave empty to auto-discover all subnets defined in Infoblox.\n- infoblox.max_results: Max results per WAPI query. Use a negative value (e.g. -100000) to bypass Infoblox's default 1000-result cap for large networks.\n- netbrain_scope.site_path: Optional NetBrain Site full path (e.g. \"My Network\\Data Center A\") to scope the NetBrain side of the comparison. Leave empty to compare against the entire live network.\n- netbrain_scope.include_child_sites: Whether to include child sites when site_path is set. Default true.\n\nOutput:\nA CSV file named \"NetBrain-Infoblox-IP-Reconciliation-Report_<timestamp>.csv\" with columns Subnet, IP_Address, In_NetBrain, In_Infoblox, Consistent, Recommended_Action, saved to Files > Public > Third Party System > Infoblox in the NetBrain desktop client.",
+        "richContent": "{\"ops\": [{\"insert\": \"Purpose:\\nFetches subnet and IP address usage data from Infoblox IPAM, compares it against NetBrain's discovered live network data, and publishes a CSV reconciliation report.\\n\\nReconciliation rules:\\n1. If an IP or subnet is marked \\\"Used\\\" in Infoblox but NetBrain has not discovered it, the report flags it with the recommended action \\\"Discover IP in NetBrain\\\".\\n2. If NetBrain has discovered a device IP that Infoblox has no record of, the report flags it with the recommended action \\\"Register IP in Infoblox\\\".\\n3. If an IP is consistent on both sides, the recommended action is \\\"No action\\\".\\n\\nPrerequisite:\\nCreate an External API Server in NetBrain (System > Integration > API Servers), using the built-in \\\"Infoblox API Adapter\\\", pointing to the Infoblox Grid Manager (e.g. https://gm.example.com) with a WAPI user/password that has read access to the network and ipv4address WAPI objects. Its name must match the infoblox.api_server_name input value below (default \\\"Infoblox API Server\\\").\\n\\nInput parameters:\\n- infoblox.api_server_name: Name of the External API Server registered in NetBrain that points to the \\\"Infoblox API Adapter\\\". Default \\\"Infoblox API Server\\\".\\n- infoblox.wapi_version: Infoblox WAPI version, e.g. \\\"v2.12\\\".\\n- infoblox.network_view: Optional Infoblox network view filter, e.g. \\\"default\\\". Leave empty for all views.\\n- infoblox.subnets: Optional explicit list of subnet CIDR strings to reconcile, e.g. [\\\"10.0.104.0/24\\\"]. Leave empty to auto-discover all subnets defined in Infoblox.\\n- infoblox.max_results: Max results per WAPI query. Use a negative value (e.g. -100000) to bypass Infoblox's default 1000-result cap for large networks.\\n- netbrain_scope.site_path: Optional NetBrain Site full path (e.g. \\\"My Network\\\\Data Center A\\\") to scope the NetBrain side of the comparison. Leave empty to compare against the entire live network.\\n- netbrain_scope.include_child_sites: Whether to include child sites when site_path is set. Default true.\\n\\nOutput:\\nA CSV file named \\\"NetBrain-Infoblox-IP-Reconciliation-Report_<timestamp>.csv\\\" with columns Subnet, IP_Address, In_NetBrain, In_Infoblox, Consistent, Recommended_Action, saved to Files > Public > Third Party System > Infoblox in the NetBrain desktop client.\\n\"}]}"
+    },
+    "files": [
+        {
+            "name": "main.py"
+        }
+    ],
+    "input": {
+        "enabled": true,
+        "sample": "{\n    \"infoblox\": {\n        \"api_server_name\": \"Infoblox API Server\",\n        \"wapi_version\": \"v2.12\",\n        \"network_view\": \"\",\n        \"subnets\": [],\n        \"max_results\": -100000\n    },\n    \"netbrain_scope\": {\n        \"site_path\": \"\",\n        \"include_child_sites\": true\n    }\n}"
+    },
+    "lockPwd": null,
+    "qualify": {
+        "deviceGroup": {
+            "path": null
+        },
+        "enabled": false
+    },
+    "recommendation": {
+        "defaultCheckedInPoint": false,
+        "enabled": false,
+        "execPoints": []
+    },
+    "version": "8.0"
+}
