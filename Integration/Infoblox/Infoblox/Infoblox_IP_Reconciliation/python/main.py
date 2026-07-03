@@ -103,16 +103,27 @@ def get_json_response(api_server, api_params, context=''):
 
 def get_infoblox_subnets(api_server, wapi_version):
     '''
-    Enumerate every subnet CIDR Infoblox knows about via ipam:statistics (bare call,
-    no filter), mirroring the confirmed-working two-step getData flow: enumerate
-    subnets first, then query each one individually for its addresses.
+    Enumerate every subnet Infoblox knows about via ipam:statistics, mirroring the
+    confirmed-working two-step getData flow: enumerate subnets first, then query each
+    one individually for its addresses.
+
+    ipam:statistics returns "network" and "cidr" as separate fields ("network" is the
+    bare network address, with no mask) - they're combined here into a proper CIDR
+    string (e.g. "192.168.180.0/24") since that's what ipv4address.network actually
+    carries and what NetBrain's duplicateip lookup expects.
     '''
     api_params = {
         'url': '/wapi/{}/ipam:statistics'.format(wapi_version),
-        'api_parm': {'query': {}}
+        'api_parm': {'query': {'_return_fields': ['network', 'cidr']}}
     }
     data = get_json_response(api_server, api_params, 'subnet enumeration (ipam:statistics)')
-    return [item['network'] for item in (data or []) if item.get('network')]
+    subnets = []
+    for item in (data or []):
+        network = item.get('network')
+        cidr = item.get('cidr')
+        if network and cidr:
+            subnets.append('{}/{}'.format(network, cidr))
+    return subnets
 
 
 def get_used_ips_for_subnet(api_server, wapi_version, network_view, max_results, subnet):
