@@ -171,6 +171,21 @@ def get_netbrain_ips(subnet, allowed_device_names):
     return ips
 
 
+def is_ip_known_in_netbrain(ip, allowed_device_names):
+    '''
+    Authoritative single-IP check via datamodel.GetDeviceNameFromIp, used as a fallback/
+    cross-check for get_netbrain_ips(): GetSubnetIpInterfacesBySubnets is a "duplicate IP"
+    API keyed on Zone grouping and can miss addresses that GetDeviceNameFromIp still
+    resolves directly to a device.
+    '''
+    device_name = datamodel.GetDeviceNameFromIp(ip)
+    if not device_name:
+        return False
+    if allowed_device_names is not None and device_name not in allowed_device_names:
+        return False
+    return True
+
+
 def get_site_scoped_device_names(site_path, include_child):
     '''Resolve a NetBrain Site path to the set of device names in scope.'''
     device_ids = datamodel.GetDeviceIdsFromSite(site_path, include_child) or []
@@ -292,6 +307,12 @@ def run(input):
     for subnet in subnets:
         infoblox_used_ips = infoblox_used_by_subnet.get(subnet, set())
         netbrain_ips = get_netbrain_ips(subnet, allowed_device_names)
+        # GetSubnetIpInterfacesBySubnets can miss addresses it should have found (it's a
+        # "duplicate IP" API keyed on Zone grouping) - cross-check every Infoblox-used IP
+        # directly so a known-but-missed device doesn't get misreported as "not in NetBrain".
+        for ip in infoblox_used_ips - netbrain_ips:
+            if is_ip_known_in_netbrain(ip, allowed_device_names):
+                netbrain_ips.add(ip)
         rows = reconcile_subnet(subnet, infoblox_used_ips, netbrain_ips)
         all_rows.extend(rows)
         for row in rows:
