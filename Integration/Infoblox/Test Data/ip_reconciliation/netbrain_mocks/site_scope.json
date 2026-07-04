@@ -1,0 +1,8 @@
+{
+  "site_path": "My Network\\Data Center A",
+  "device_ids": ["dev-1", "dev-2"],
+  "device_objects": {
+    "dev-1": {"name": "R1"},
+    "dev-2": {"name": "R2"}
+  }
+}

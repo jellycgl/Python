@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Infoblox IP Reconciliation — Test Report</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+         background: #f4f6f9; color: #222; font-size: 14px; }
+  header { background: #1a2b45; color: #fff; padding: 28px 40px 24px; }
+  header h1 { font-size: 22px; font-weight: 600; letter-spacing: .3px; }
+  header p  { color: #94a3b8; margin-top: 4px; font-size: 13px; }
+  .summary { display: flex; gap: 16px; margin: 20px 40px; }
+  .stat { background: #fff; border-radius: 8px; padding: 16px 24px;
+           box-shadow: 0 1px 3px rgba(0,0,0,.08); min-width: 120px; text-align: center; }
+  .stat .num { font-size: 32px; font-weight: 700; }
+  .stat .lbl { font-size: 12px; color: #64748b; margin-top: 2px; }
+  .stat.total .num  { color: #1a2b45; }
+  .stat.spassed .num { color: #16a34a; }
+  .stat.sfailed .num { color: #dc2626; }
+  main { padding: 0 40px 40px; }
+  section.group { margin-bottom: 24px; }
+  .group-header { display: flex; align-items: center; gap: 12px;
+                   background: #fff; border-radius: 8px 8px 0 0;
+                   padding: 14px 20px; border-left: 4px solid #94a3b8;
+                   box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+  .group-header.all-pass  { border-left-color: #16a34a; }
+  .group-header.has-fail  { border-left-color: #dc2626; }
+  .group-title { font-weight: 700; font-size: 15px; }
+  .group-sub   { color: #64748b; font-size: 12px; }
+  .group-score { margin-left: auto; font-weight: 600; color: #1a2b45; }
+  .tc { background: #fff; border-top: 1px solid #e2e8f0; }
+  .tc:last-child { border-radius: 0 0 8px 8px; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+  .tc-header { display: flex; align-items: center; gap: 10px;
+                padding: 10px 20px; cursor: default; }
+  .tc-id   { font-family: monospace; font-size: 12px; color: #64748b;
+              background: #f1f5f9; padding: 2px 7px; border-radius: 4px; }
+  .tc-desc { font-size: 13px; }
+  .tc-body { padding: 0 20px 14px 20px; }
+  .badge { font-size: 11px; font-weight: 700; padding: 2px 8px;
+            border-radius: 10px; letter-spacing: .4px; }
+  .badge.pass { background: #dcfce7; color: #15803d; }
+  .badge.fail { background: #fee2e2; color: #b91c1c; }
+  table.assertions { border-collapse: collapse; width: 100%; margin-top: 6px; }
+  table.assertions td { padding: 4px 8px; vertical-align: top; font-size: 13px; }
+  tr.ok .mark { color: #16a34a; font-size: 15px; width: 20px; }
+  tr.ko .mark { color: #dc2626; font-size: 15px; width: 20px; }
+  .diff { color: #64748b; font-size: 12px; }
+  .diff code { background: #f1f5f9; padding: 1px 4px; border-radius: 3px; }
+  .nb-section { margin-top: 12px; border-top: 1px dashed #cbd5e1; padding-top: 10px; }
+  .nb-section strong { font-size: 12px; color: #475569; }
+  .nb-iface { font-family: monospace; font-size: 12px; color: #1e40af;
+               background: #eff6ff; padding: 3px 8px; border-radius: 4px;
+               margin: 8px 0 4px; display: inline-block; }
+  pre.json { background: #1e293b; color: #e2e8f0; padding: 12px 16px;
+              border-radius: 6px; font-size: 12px; line-height: 1.6;
+              overflow-x: auto; white-space: pre; }
+  .note { margin: 0 40px 20px; background: #fffbeb; border: 1px solid #fde68a;
+           border-radius: 8px; padding: 12px 18px; font-size: 12.5px; color: #78350f; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Infoblox IP Reconciliation &mdash; Test Report</h1>
+  <p>Plugin under test: Infoblox/Infoblox_IP_Reconciliation/python/main.py</p>
+</header>
+
+<div class="note">
+  <strong>Scope note:</strong> the real NetBrain middle layer (External API Server / Front Server routing,
+  and the <code>duplicateip</code> / <code>datamodel</code> / <code>certification</code> interfaces) is stubbed
+  with fixture data from <code>Test Data/ip_reconciliation/netbrain_mocks/</code>. The Infoblox WAPI response is
+  fed in as the assumed "API echo" from <code>Test Data/ip_reconciliation/api_responses/</code>, so this report
+  verifies request construction, response parsing, reconciliation logic, CSV generation and error handling in
+  the plugin itself &mdash; not connectivity to a live NetBrain or Infoblox system.
+</div>
+
+<div class="summary">
+  <div class="stat total">  <div class="num">22</div>  <div class="lbl">Total</div>  </div>
+  <div class="stat spassed"><div class="num">22</div> <div class="lbl">Passed</div> </div>
+  <div class="stat sfailed"><div class="num">0</div> <div class="lbl">Failed</div> </div>
+</div>
+
+<main>
+
+    <section class="group">
+      <div class="group-header all-pass">
+        <span class="group-title">Unit Tests</span>
+        <span class="group-sub">main.py — helper &amp; parsing functions</span>
+        <span class="group-score">12/12</span>
+      </div>
+      
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-U-01</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">get_json_response: bare list response parses as-is</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>5 records parsed from bare list</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-U-02</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">get_json_response: {&quot;result&quot;: [...]} wrapper is unwrapped</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>Wrapper unwrapped to 1 record</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-U-03</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">get_json_response: httpStatusCode != 200 treated as error -&gt; None</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>None returned for HTTP 400 response</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-U-04</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">get_json_response: empty/falsy raw response -&gt; None (no exception)</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>None returned for empty response</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-U-05</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">get_infoblox_subnets: builds CIDR strings from network+cidr, skips entries missing cidr</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>2 CIDRs built; entry without cidr skipped</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-U-07</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">get_used_ips_for_subnet: only status=USED addresses are kept</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>4 USED IPs kept; 1 UNUSED (.4) excluded</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-U-08</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">get_used_ips_for_subnet: network_view is included in the query when provided</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>network_view=&#x27;default&#x27; present in query</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>query scoped to the requested subnet</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-U-09</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">ip_sort_key: numeric dotted-quad ordering, non-IP strings sort after valid IPs</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>Numeric order for valid IPs; invalid IP pushed last</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-U-10</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">reconcile_subnet: classifies consistent / discover / register correctly</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>Present both sides -&gt; No action</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>Infoblox-only -&gt; Discover IP in NetBrain</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>NetBrain-only -&gt; Register IP in Infoblox</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-U-11</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">build_csv: header row and data rows are formatted correctly</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>Header row matches spec</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>Data row formatted correctly</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-U-12</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">is_ip_known_in_netbrain: fallback resolves/rejects based on GetDeviceNameFromIp + site scope</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>Known IP with no site scope -&gt; True</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>Unresolvable IP -&gt; False</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>Resolved but device outside site scope -&gt; False</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-U-13</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">get_site_scoped_device_names: resolves a site path to its device names</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>Site resolves to R1 and R2</td><td></td></tr></tbody>
+            </table>
+            <div class="nb-section"><strong>NetBrain / API Interface Calls</strong><div class="nb-iface">datamodel.GetDeviceIdsFromSite</div><pre class="json">{
+  &quot;site_path&quot;: &quot;My Network\\Data Center A&quot;,
+  &quot;include_child&quot;: true
+}</pre><div class="nb-iface">datamodel.GetDeviceObjectById</div><pre class="json">{
+  &quot;resolved_names&quot;: [
+    &quot;R1&quot;,
+    &quot;R2&quot;
+  ]
+}</pre></div>
+          </div>
+        </div>
+    </section>
+    <section class="group">
+      <div class="group-header all-pass">
+        <span class="group-title">Integration Tests</span>
+        <span class="group-sub">main.py — full run() orchestration</span>
+        <span class="group-score">10/10</span>
+      </div>
+      
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-I-01</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">Explicit subnets, mixed reconciliation, is_ip_known_in_netbrain fallback recovers .5</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>run() returns True</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>export_certification_report was called</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>10.0.104.1 consistent -&gt; No action</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>10.0.104.2 consistent -&gt; No action</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>.3 stays &#x27;Discover IP in NetBrain&#x27; (fallback also misses it)</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>.5 recovered by is_ip_known_in_netbrain fallback -&gt; No action</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>.10 is NetBrain-only -&gt; Register IP in Infoblox</td><td></td></tr></tbody>
+            </table>
+            <div class="nb-section"><strong>NetBrain / API Interface Calls</strong><div class="nb-iface">certification.export_certification_report</div><pre class="json">{
+  &quot;export_path&quot;: &quot;Third Party System/Infoblox&quot;,
+  &quot;csv_preview&quot;: [
+    &quot;Subnet,IP_Address,In_NetBrain,In_Infoblox,Consistent,Recommended_Action&quot;,
+    &quot;10.0.104.0/24,10.0.104.1,Yes,Yes,Yes,No action&quot;,
+    &quot;10.0.104.0/24,10.0.104.2,Yes,Yes,Yes,No action&quot;,
+    &quot;10.0.104.0/24,10.0.104.3,No,Yes,No,Discover IP in NetBrain&quot;,
+    &quot;10.0.104.0/24,10.0.104.5,Yes,Yes,Yes,No action&quot;,
+    &quot;10.0.104.0/24,10.0.104.10,Yes,No,No,Register IP in Infoblox&quot;
+  ]
+}</pre></div>
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-I-02</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">No subnets configured -&gt; auto-discover via ipam:statistics (missing-cidr entry skipped)</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>run() returns True</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>Subnet enumeration called once</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>Only the 2 valid subnets were queried (10.0.200.0 dropped: no cidr)</td><td></td></tr></tbody>
+            </table>
+            <div class="nb-section"><strong>NetBrain / API Interface Calls</strong><div class="nb-iface">pythonlib.get_api_response(ipam:statistics)</div><pre class="json">{
+  &quot;requests&quot;: [
+    {
+      &quot;url&quot;: &quot;/wapi/v2.12/ipam:statistics&quot;,
+      &quot;query&quot;: {
+        &quot;_return_fields&quot;: [
+          &quot;network&quot;,
+          &quot;cidr&quot;
+        ]
+      }
+    }
+  ]
+}</pre></div>
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-I-03</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">network_view filter is forwarded into every ipv4address query</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>run() returns True</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>network_view=&#x27;default&#x27; present on every ipv4address call</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-I-04</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">Site scoping: devices outside the site are excluded, changing the recommended action</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>run() returns True</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>SW1&#x27;s .10 (outside site R1/R2) is excluded from the NetBrain side entirely</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>R1&#x27;s .1 still consistent (device is inside the site)</td><td></td></tr></tbody>
+            </table>
+            <div class="nb-section"><strong>NetBrain / API Interface Calls</strong><div class="nb-iface">datamodel.GetDeviceIdsFromSite -&gt; device scope</div><pre class="json">{
+  &quot;site_path&quot;: &quot;My Network\\Data Center A&quot;,
+  &quot;allowed&quot;: [
+    &quot;R1&quot;,
+    &quot;R2&quot;
+  ]
+}</pre></div>
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-I-05</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">Missing infoblox.api_server_name -&gt; run() returns False without any API/NetBrain calls</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>run() returns False</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>No ApiServer resolution attempted</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-I-06</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">External API Server not found in NetBrain -&gt; run() returns False</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>run() returns False when ApiServer lookup is empty</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-I-07</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">No subnets resolved from Infoblox (empty ipam:statistics) -&gt; run() returns False</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>run() returns False; nothing to reconcile</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>No report exported when there are no subnets</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-I-08</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">certification.export_certification_report failure -&gt; run() returns False</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>run() returns False on export failure</td><td></td></tr></tbody>
+            </table>
+            <div class="nb-section"><strong>NetBrain / API Interface Calls</strong><div class="nb-iface">certification.export_certification_report -&gt; failure</div><pre class="json">{
+  &quot;error&quot;: &quot;Public folder quota exceeded&quot;
+}</pre></div>
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-I-09</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">Infoblox has zero USED IPs in a subnet; NetBrain-only devices -&gt; all rows &quot;Register IP in Infoblox&quot;</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>run() returns True</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>EdgeRouter&#x27;s 192.168.1.50 flagged for registration in Infoblox</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+        <div class="tc tc-pass">
+          <div class="tc-header">
+            <span class="tc-id">TC-I-10</span>
+            <span class="badge pass">PASS</span>
+            <span class="tc-desc">ipv4address response wrapped as {&quot;result&quot;: [...]} is unwrapped through the full run() flow</span>
+          </div>
+          <div class="tc-body">
+            <table class="assertions">
+              <tbody><tr class="ok"><td class="mark">&#10003;</td><td>run() returns True</td><td></td></tr><tr class="ok"><td class="mark">&#10003;</td><td>Wrapped result still reconciled correctly (10.0.110.1 consistent)</td><td></td></tr></tbody>
+            </table>
+            
+          </div>
+        </div>
+    </section>
+</main>
+</body>
+</html>

@@ -1,0 +1,5 @@
+{
+  "result": [
+    {"ip_address": "10.0.110.1", "network": "10.0.110.0/24", "status": "USED", "names": ["core-sw1"], "usage": ["STATIC"]}
+  ]
+}

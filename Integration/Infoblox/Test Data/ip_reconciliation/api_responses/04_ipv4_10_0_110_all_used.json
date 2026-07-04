@@ -1,0 +1,4 @@
+[
+  {"ip_address": "10.0.110.1", "network": "10.0.110.0/24", "status": "USED", "names": ["core-sw1"], "usage": ["STATIC"]},
+  {"ip_address": "10.0.110.2", "network": "10.0.110.0/24", "status": "USED", "names": ["core-sw2"], "usage": ["STATIC"]}
+]

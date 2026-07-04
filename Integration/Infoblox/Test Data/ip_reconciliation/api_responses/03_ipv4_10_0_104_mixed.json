@@ -1,0 +1,7 @@
+[
+  {"ip_address": "10.0.104.1", "network": "10.0.104.0/24", "status": "USED", "names": ["host1"], "usage": ["DHCP"]},
+  {"ip_address": "10.0.104.2", "network": "10.0.104.0/24", "status": "USED", "names": ["host2"], "usage": ["DHCP"]},
+  {"ip_address": "10.0.104.3", "network": "10.0.104.0/24", "status": "USED", "names": ["host3"], "usage": ["STATIC"]},
+  {"ip_address": "10.0.104.4", "network": "10.0.104.0/24", "status": "UNUSED", "names": [], "usage": []},
+  {"ip_address": "10.0.104.5", "network": "10.0.104.0/24", "status": "USED", "names": ["host5"], "usage": ["STATIC"]}
+]

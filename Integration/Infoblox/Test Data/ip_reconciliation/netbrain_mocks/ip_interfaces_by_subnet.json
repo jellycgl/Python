@@ -1,0 +1,14 @@
+{
+  "10.0.104.0/24": [
+    {"ipIntfs": [{"ip": "10.0.104.1/24", "deviceName": "R1"}]},
+    {"ipIntfs": [{"ip": "10.0.104.2/24", "deviceName": "R2"}]},
+    {"ipIntfs": [{"ip": "10.0.104.10/24", "deviceName": "SW1"}]}
+  ],
+  "10.0.110.0/24": [
+    {"ipIntfs": [{"ip": "10.0.110.1/24", "deviceName": "CoreSW1"}]},
+    {"ipIntfs": [{"ip": "10.0.110.2/24", "deviceName": "CoreSW2"}]}
+  ],
+  "192.168.1.0/24": [
+    {"ipIntfs": [{"ip": "192.168.1.50/24", "deviceName": "EdgeRouter"}]}
+  ]
+}
