@@ -1,0 +1,9 @@
+Subnet,IP_Address,In_NetBrain,In_Infoblox,Consistent,Recommended_Action
+10.0.104.0/24,10.0.104.1,Yes,Yes,Yes,No action
+10.0.104.0/24,10.0.104.2,Yes,Yes,Yes,No action
+10.0.104.0/24,10.0.104.3,No,Yes,No,Discover IP in NetBrain
+10.0.104.0/24,10.0.104.5,Yes,Yes,Yes,No action
+10.0.104.0/24,10.0.104.10,Yes,No,No,Register IP in Infoblox
+10.0.110.0/24,10.0.110.1,Yes,Yes,Yes,No action
+10.0.110.0/24,10.0.110.2,Yes,Yes,Yes,No action
+192.168.1.0/24,192.168.1.50,Yes,No,No,Register IP in Infoblox
