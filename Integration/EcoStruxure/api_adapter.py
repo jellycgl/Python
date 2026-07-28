@@ -204,7 +204,9 @@ def get_data(param):
 
             if response.status_code == 200:
                 json_response = response.json()
-                return json_response.get('result', json_response)
+                if isinstance(json_response, dict):
+                    return json_response.get('result', json_response)
+                return json_response
 
             return response.text
         else:
@@ -244,7 +246,9 @@ def get_data(param):
 
             if response.status_code == 200:
                 json_response = response.json()
-                return json_response.get('result', json_response)
+                if isinstance(json_response, dict):
+                    return json_response.get('result', json_response)
+                return json_response
 
             return response.text
 
