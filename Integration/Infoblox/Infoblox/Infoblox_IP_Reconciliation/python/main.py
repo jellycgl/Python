@@ -149,16 +149,55 @@ def get_used_ips_for_subnet(api_server, wapi_version, network_view, max_results,
     return {r.get('ip_address') for r in records if r.get('ip_address') and r.get('status') == 'USED'}
 
 
-def get_netbrain_ips(subnet, allowed_device_names):
-    '''Return the set of IP addresses NetBrain has discovered within the given subnet.
-    If allowed_device_names is not None, only IPs owned by those devices are counted
-    (used to scope the comparison to a specific Site).'''
+def get_infoblox_network_info(api_server, network_view, subnet):
+    '''
+    Return (found, comment) for the Infoblox "network" object matching the given subnet:
+    found is True iff Infoblox has a network object for this subnet, comment is its
+    Comment field ('' if unset or not found).
+
+    Always queries /wapi/v2.7/network (fixed version, independent of the configurable
+    wapi_version) - this is the network-level object (not ipv4address), used only for the
+    subnet-granularity report.
+    '''
+    query = {
+        'network': subnet,
+        '_return_fields': ['network', 'comment']
+    }
+    if network_view:
+        query['network_view'] = network_view
+    api_params = {
+        'url': '/wapi/v2.7/network',
+        'api_parm': {'query': query}
+    }
+    data = get_json_response(api_server, api_params, 'network info of subnet {}'.format(subnet))
+    records = data if isinstance(data, list) else []
+    for record in records:
+        if record.get('network') == subnet:
+            return True, record.get('comment') or ''
+    return False, ''
+
+
+def get_netbrain_subnet_data(subnet, allowed_device_names):
+    '''
+    Return (ips, descriptions) discovered by NetBrain within the given subnet.
+      - ips: set of IP addresses found on IP Interfaces in this subnet.
+      - descriptions: sorted list of unique, non-empty Interface descriptions.
+    If allowed_device_names is not None, only interfaces owned by those devices are
+    counted (used to scope the comparison to a specific Site).
+
+    NetBrain auto-creates an IP Interface (ipIntfs) record whenever a device Interface
+    has an IPv4 or IPv6 Address configured, but "description" only lives on the parent
+    physical Interface object - the ipIntf record's own description field is always
+    empty. So the description has to be looked up separately via the ipIntf's
+    "devInterfaceId", which points back at the owning Interface object.
+    '''
     ips = set()
+    interface_ids = set()
     try:
         subnet_records = duplicateip.GetSubnetIpInterfacesBySubnets([subnet])
     except Exception as e:
         pluginfw.AddLog('Failed to query NetBrain IP interfaces for subnet {}: {}'.format(subnet, e), pluginfw.ERROR)
-        return ips
+        return ips, []
 
     for record in subnet_records or []:
         for ip_intf in record.get('ipIntfs', []):
@@ -168,15 +207,30 @@ def get_netbrain_ips(subnet, allowed_device_names):
             ip = (ip_intf.get('ip') or '').split('/')[0]
             if ip:
                 ips.add(ip)
-    return ips
+            devInterfaceId = ip_intf.get('devInterfaceId')
+            if devInterfaceId:
+                interface_ids.add(devInterfaceId)
+
+    descriptions = set()
+    for intf_id in interface_ids:
+        try:
+            intf_obj = datamodel.GetInterfaceObjectById(intf_id, 'intfs')
+        except Exception as e:
+            pluginfw.AddLog('Failed to query NetBrain Interface {} for description: {}'.format(intf_id, e), pluginfw.WARNING)
+            continue
+        descr = (intf_obj or {}).get('descr')
+        if descr:
+            descriptions.add(descr)
+
+    return ips, sorted(descriptions)
 
 
 def is_ip_known_in_netbrain(ip, allowed_device_names):
     '''
     Authoritative single-IP check via datamodel.GetDeviceNameFromIp, used as a fallback/
-    cross-check for get_netbrain_ips(): GetSubnetIpInterfacesBySubnets is a "duplicate IP"
-    API keyed on Zone grouping and can miss addresses that GetDeviceNameFromIp still
-    resolves directly to a device.
+    cross-check for get_netbrain_subnet_data(): GetSubnetIpInterfacesBySubnets is a
+    "duplicate IP" API keyed on Zone grouping and can miss addresses that
+    GetDeviceNameFromIp still resolves directly to a device.
     '''
     device_name = datamodel.GetDeviceNameFromIp(ip)
     if not device_name:
@@ -233,10 +287,40 @@ def reconcile_subnet(subnet, infoblox_used_ips, netbrain_ips):
     return rows
 
 
-def build_csv(rows):
+def reconcile_subnet_level(subnet, in_infoblox, in_netbrain):
+    '''
+    Same reconciliation rules as reconcile_subnet(), applied at subnet granularity instead
+    of per-IP: "in_infoblox" means Infoblox has a network object for this subnet, "in_netbrain"
+    means NetBrain has discovered at least one IP interface within it.
+    '''
+    consistent = in_infoblox and in_netbrain
+    if consistent:
+        action = 'No action'
+    elif in_infoblox and not in_netbrain:
+        action = 'Discover Subnet in NetBrain'
+    else:
+        action = 'Register Subnet in Infoblox'
+    return [
+        subnet,
+        'Yes' if in_netbrain else 'No',
+        'Yes' if in_infoblox else 'No',
+        'Yes' if consistent else 'No',
+        action
+    ]
+
+
+def build_ip_csv(rows):
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(['Subnet', 'IP_Address', 'In_NetBrain', 'In_Infoblox', 'Consistent', 'Recommended_Action'])
+    writer.writerow(['Subnet', 'IP_Address', 'In_NetBrain', 'In_Infoblox', 'Consistent', 'Recommended_Action', 'Description_NetBrain'])
+    writer.writerows(rows)
+    return buf.getvalue()
+
+
+def build_subnet_csv(rows):
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(['Subnet', 'In_NetBrain', 'In_Infoblox', 'Consistent', 'Recommended_Action', 'Comment_Infoblox', 'Description_NetBrain'])
     writer.writerows(rows)
     return buf.getvalue()
 
@@ -247,11 +331,17 @@ def run(input):
     discovered live network data, and publish a CSV reconciliation report to
     Public/Third Party System/Infoblox.
 
+    If report.precise_to_ip is False, the report is produced at subnet granularity
+    instead of per-IP: it skips the Infoblox ipv4address/NetBrain IP comparison
+    entirely and instead pulls each subnet's Comment straight off the Infoblox
+    "network" object (/wapi/v2.7/network).
+
     return True if the plugin completed successfully, False otherwise.
     '''
     params = json.loads(input) if input else {}
     infoblox_cfg = params.get('infoblox', {})
     scope_cfg = params.get('netbrain_scope', {})
+    report_cfg = params.get('report', {})
 
     api_server_name = infoblox_cfg.get('api_server_name') or ''
     wapi_version = infoblox_cfg.get('wapi_version') or 'v2.10'
@@ -261,6 +351,8 @@ def run(input):
 
     site_path = scope_cfg.get('site_path') or ''
     include_child_sites = scope_cfg.get('include_child_sites', True)
+
+    precise_to_ip = report_cfg.get('precise_to_ip', True)
 
     if not api_server_name:
         pluginfw.AddLog(
@@ -290,10 +382,6 @@ def run(input):
         pluginfw.AddLog('No Infoblox subnets to reconcile. Exiting.', pluginfw.WARNING)
         return False
 
-    infoblox_used_by_subnet = {}
-    for subnet in subnets:
-        infoblox_used_by_subnet[subnet] = get_used_ips_for_subnet(api_server, wapi_version, network_view, max_results, subnet)
-
     allowed_device_names = None
     if site_path:
         allowed_device_names = get_site_scoped_device_names(site_path, include_child_sites)
@@ -302,23 +390,59 @@ def run(input):
             pluginfw.INFO
         )
 
-    all_rows = []
-    action_counts = {'No action': 0, 'Discover IP in NetBrain': 0, 'Register IP in Infoblox': 0}
-    for subnet in subnets:
-        infoblox_used_ips = infoblox_used_by_subnet.get(subnet, set())
-        netbrain_ips = get_netbrain_ips(subnet, allowed_device_names)
-        # GetSubnetIpInterfacesBySubnets can miss addresses it should have found (it's a
-        # "duplicate IP" API keyed on Zone grouping) - cross-check every Infoblox-used IP
-        # directly so a known-but-missed device doesn't get misreported as "not in NetBrain".
-        for ip in infoblox_used_ips - netbrain_ips:
-            if is_ip_known_in_netbrain(ip, allowed_device_names):
-                netbrain_ips.add(ip)
-        rows = reconcile_subnet(subnet, infoblox_used_ips, netbrain_ips)
-        all_rows.extend(rows)
-        for row in rows:
-            action_counts[row[5]] = action_counts.get(row[5], 0) + 1
+    if precise_to_ip:
+        infoblox_used_by_subnet = {}
+        for subnet in subnets:
+            infoblox_used_by_subnet[subnet] = get_used_ips_for_subnet(api_server, wapi_version, network_view, max_results, subnet)
 
-    csv_content = build_csv(all_rows)
+        all_rows = []
+        action_counts = {'No action': 0, 'Discover IP in NetBrain': 0, 'Register IP in Infoblox': 0}
+        for subnet in subnets:
+            infoblox_used_ips = infoblox_used_by_subnet.get(subnet, set())
+            netbrain_ips, netbrain_descrs = get_netbrain_subnet_data(subnet, allowed_device_names)
+            # GetSubnetIpInterfacesBySubnets can miss addresses it should have found (it's a
+            # "duplicate IP" API keyed on Zone grouping) - cross-check every Infoblox-used IP
+            # directly so a known-but-missed device doesn't get misreported as "not in NetBrain".
+            for ip in infoblox_used_ips - netbrain_ips:
+                if is_ip_known_in_netbrain(ip, allowed_device_names):
+                    netbrain_ips.add(ip)
+            description_netbrain = '; '.join(netbrain_descrs)
+            rows = reconcile_subnet(subnet, infoblox_used_ips, netbrain_ips)
+            rows = [row + [description_netbrain] for row in rows]
+            all_rows.extend(rows)
+            for row in rows:
+                action_counts[row[5]] = action_counts.get(row[5], 0) + 1
+
+        csv_content = build_ip_csv(all_rows)
+        summary = (
+            'Reconciliation complete across {} subnet(s): {} IP row(s) total - {} consistent, {} to discover in '
+            'NetBrain, {} to register in Infoblox.'.format(
+                len(subnets), len(all_rows), action_counts['No action'], action_counts['Discover IP in NetBrain'],
+                action_counts['Register IP in Infoblox']
+            )
+        )
+    else:
+        all_rows = []
+        action_counts = {'No action': 0, 'Discover Subnet in NetBrain': 0, 'Register Subnet in Infoblox': 0}
+        for subnet in subnets:
+            in_infoblox, comment_infoblox = get_infoblox_network_info(api_server, network_view, subnet)
+            netbrain_ips, netbrain_descrs = get_netbrain_subnet_data(subnet, allowed_device_names)
+            in_netbrain = bool(netbrain_ips)
+            description_netbrain = '; '.join(netbrain_descrs)
+            row = reconcile_subnet_level(subnet, in_infoblox, in_netbrain)
+            action_counts[row[4]] = action_counts.get(row[4], 0) + 1
+            row.extend([comment_infoblox, description_netbrain])
+            all_rows.append(row)
+
+        csv_content = build_subnet_csv(all_rows)
+        summary = (
+            'Reconciliation complete (subnet-level) across {} subnet(s): {} consistent, {} to discover in '
+            'NetBrain, {} to register in Infoblox.'.format(
+                len(subnets), action_counts['No action'], action_counts['Discover Subnet in NetBrain'],
+                action_counts['Register Subnet in Infoblox']
+            )
+        )
+
     time_str = datetime.now().strftime('%Y%m%d_%H%M%S')
     report_name = '{}_{}.csv'.format(REPORT_NAME_PREFIX, time_str)
     result = certification.export_certification_report(report_name, csv_content, export_path=REPORT_EXPORT_PATH)
@@ -328,11 +452,7 @@ def run(input):
         return False
 
     pluginfw.AddLog(
-        'Reconciliation complete across {} subnet(s): {} IP row(s) total - {} consistent, {} to discover in '
-        'NetBrain, {} to register in Infoblox. Report saved to "Public/{}/{}".'.format(
-            len(subnets), len(all_rows), action_counts['No action'], action_counts['Discover IP in NetBrain'],
-            action_counts['Register IP in Infoblox'], REPORT_EXPORT_PATH, report_name
-        ),
+        '{} Report saved to "Public/{}/{}".'.format(summary, REPORT_EXPORT_PATH, report_name),
         pluginfw.INFO
     )
     return True
